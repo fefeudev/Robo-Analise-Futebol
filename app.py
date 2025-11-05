@@ -1,7 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 4.2 - Filtros Editáveis)
-# UPGRADE: Adicionado Filtro Duplo (Valor + Probabilidade)
-# UPGRADE: Texto "Robô" alterado para "Probabilidade"
+# O Robô de Análise (Versão 4.3 - Design de Abas)
+# UPGRADE: Adicionado st.tabs para organizar os formulários de odds
 
 import streamlit as st
 import requests
@@ -36,8 +35,6 @@ def fazer_requisicao_api(endpoint, params):
     return None
 
 # --- ETAPA 1 (CÉREBRO HÍBRIDO) ---
-
-# --- CÉREBRO 1A: DIXON-COLES (Avançado) ---
 @st.cache_data
 def carregar_cerebro_dixon_coles(id_liga):
     nome_arquivo = f"dc_params_{id_liga}.json"
@@ -59,19 +56,15 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
         forcas = dados_cerebro['forcas']
         vantagem_casa = dados_cerebro['vantagem_casa']
         rho = dados_cerebro.get('rho', 0.0)
-        
         ataque_casa = forcas[time_casa]['ataque']
         defesa_casa = forcas[time_casa]['defesa']
         ataque_visitante = forcas[time_visitante]['ataque']
         defesa_visitante = forcas[time_visitante]['defesa']
-
         lambda_casa = np.exp(ataque_casa + defesa_visitante + vantagem_casa)
         mu_visitante = np.exp(ataque_visitante + defesa_casa)
-    
     except KeyError as e:
         st.warning(f"Aviso (DC): Time '{e.args[0]}' não foi encontrado no Cérebro (time novo?). Pulando.")
         return None
-    
     def tau(gols_casa, gols_visitante, lambda_casa, mu_visit, rho):
         if rho == 0.0: return 1.0
         if gols_casa == 0 and gols_visitante == 0: return 1 - (lambda_casa * mu_visit * rho)
@@ -79,25 +72,18 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
         elif gols_casa == 0 and gols_visitante == 1: return 1 + (mu_visit * rho)
         elif gols_casa == 1 and gols_visitante == 1: return 1 - rho
         else: return 1.0
-            
     prob_vitoria_casa, prob_empate, prob_vitoria_visitante = 0.0, 0.0, 0.0
     prob_over_2_5, prob_btts_sim = 0.0, 0.0
     soma_total_probs = 0.0
-
     for i in range(config.MAX_GOLS_CALCULO + 1): 
         for j in range(config.MAX_GOLS_CALCULO + 1):
-            prob_placar = (
-                stats.poisson.pmf(i, lambda_casa) *
-                stats.poisson.pmf(j, mu_visitante) *
-                tau(i, j, lambda_casa, mu_visitante, rho)
-            )
+            prob_placar = (stats.poisson.pmf(i, lambda_casa) * stats.poisson.pmf(j, mu_visitante) * tau(i, j, lambda_casa, mu_visitante, rho))
             soma_total_probs += prob_placar
             if i > j: prob_vitoria_casa += prob_placar
             elif i == j: prob_empate += prob_placar
             elif j > i: prob_vitoria_visitante += prob_placar
             if (i + j) > 2.5: prob_over_2_5 += prob_placar
             if (i > 0 and j > 0): prob_btts_sim += prob_placar
-
     if soma_total_probs == 0: return None
     prob_dc_1x = prob_vitoria_casa + prob_empate
     prob_dc_x2 = prob_empate + prob_vitoria_visitante
@@ -109,7 +95,6 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
         'chance_dupla_X2': prob_dc_x2 / soma_total_probs, 'chance_dupla_12': prob_dc_12 / soma_total_probs,
     }
 
-# --- CÉREBRO 1B: POISSON "FORMA RECENTE" (O "Fallback") ---
 @st.cache_data 
 def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
     # (Função idêntica)
@@ -194,28 +179,17 @@ def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
         'chance_dupla_X2': prob_dc_x2 / soma_total_probs, 'chance_dupla_12': prob_dc_12 / soma_total_probs,
     }
 
-# --- FUNÇÕES COMPARTILHADAS (Encontrar Valor, Coleta, Telegram) ---
-
-# --- ESTA FUNÇÃO FOI ATUALIZADA ---
 def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.60, filtro_valor_minimo=0.05):
-    """
-    Encontra valor usando o FILTRO DUPLO:
-    1. Valor Mínimo (ex: > 5%)
-    2. Probabilidade Mínima (ex: > 60%)
-    """
+    # (Função idêntica)
     oportunidades = {}
     for mercado, odd in odds_casa.items():
         if odd is None or odd == 0.0 or mercado not in probabilidades_calculadas:
             continue
-            
         prob_casa_aposta = 1 / odd
-        prob_robo = probabilidades_calculadas[mercado] # Ex: 0.65 (65%)
-        valor = prob_robo - prob_casa_aposta          # Ex: 0.65 - 0.50 = 0.15 (15%)
-        
-        # --- O NOVO FILTRO DUPLO ---
+        prob_robo = probabilidades_calculadas[mercado] 
+        valor = prob_robo - prob_casa_aposta          
         temValor = valor > filtro_valor_minimo
         eProvavel = prob_robo > filtro_prob_minima
-        
         if temValor and eProvavel:
             oportunidades[mercado] = {
                 'odd_casa': odd,
@@ -287,7 +261,7 @@ with st.sidebar:
     TEMPORADA_ATUAL = config.TEMPORADA_PARA_ANALISAR 
 
     st.header("2. Cérebro do Robô")
-    MODO_CEREBRO = "FALHA" # Define um padrão
+    MODO_CEREBRO = "FALHA" 
     
     with st.spinner(f"Tentando carregar Cérebro Dixon-Coles para {LIGA_ATUAL}..."):
         dados_cerebro_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
@@ -317,21 +291,13 @@ with st.sidebar:
         datetime.now()
     )
     
-    # --- NOVO SELETOR DE PROBABILIDADE ---
     st.header("4. Filtros de Análise")
     filtro_prob_minima_percentual = st.slider(
         "Probabilidade Mínima (Chance de Green)", 
-        min_value=0, 
-        max_value=100, 
-        value=60, # Padrão de 60%
-        step=5,
-        format="%d%%" # Mostra como "60%"
+        min_value=0, max_value=100, value=60, step=5, format="%d%%"
     )
-    # Converte de 60% para 0.60
     filtro_prob_minima = filtro_prob_minima_percentual / 100.0 
-    
-    # (Poderíamos adicionar o filtro de valor, mas vamos manter simples por enquanto)
-    filtro_valor_minimo = 0.05 # 5%
+    filtro_valor_minimo = 0.05
     
 # --- 2. PÁGINA PRINCIPAL ---
 st.title("Robô de Análise de Valor (Híbrido) 🧠")
@@ -354,23 +320,34 @@ if MODO_CEREBRO != "FALHA":
         
         for i, jogo in enumerate(jogos_do_dia):
             with st.expander(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}"):
+                
+                # --- ESTE É O FORMULÁRIO ATUALIZADO (MELHORIA 1) ---
                 with st.form(key=f"form_jogo_{i}"):
-                    # (Layout do formulário idêntico)
-                    st.write("**Mercado 1X2**")
-                    col1, col2, col3 = st.columns(3)
-                    with col1: odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
-                    with col2: odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
-                    with col3: odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
-                    st.write("**Chance Dupla**")
-                    col_dc1, col_dc2, col_dc3 = st.columns(3)
-                    with col_dc1: odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
-                    with col_dc2: odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
-                    with col_dc3: odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
-                    st.write("**Gols**")
-                    col4, col5 = st.columns(2)
-                    with col4: odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
-                    with col5: odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
                     
+                    # Cria as 3 abas
+                    tab_1x2, tab_dc, tab_gols = st.tabs(["📊 Resultado (1x2)", "🤝 Chance Dupla", "⚽ Gols"])
+
+                    with tab_1x2:
+                        st.write("**Mercado 1X2**")
+                        col1, col2, col3 = st.columns(3)
+                        with col1: odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
+                        with col2: odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
+                        with col3: odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
+                    
+                    with tab_dc:
+                        st.write("**Chance Dupla**")
+                        col_dc1, col_dc2, col_dc3 = st.columns(3)
+                        with col_dc1: odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
+                        with col_dc2: odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
+                        with col_dc3: odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
+                    
+                    with tab_gols:
+                        st.write("**Gols**")
+                        col4, col5 = st.columns(2)
+                        with col4: odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
+                        with col5: odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
+                    
+                    # Botão de submit (fora das abas, dentro do form)
                     submitted = st.form_submit_button("Analisar este Jogo")
 
                     if submitted:
@@ -399,36 +376,31 @@ if MODO_CEREBRO != "FALHA":
                                     )
                             
                             if probs_robo:
-                                # --- AQUI PASSAMOS OS FILTROS DA INTERFACE ---
                                 oportunidades = encontrar_valor(
-                                    probs_robo, 
-                                    odds_manuais, 
-                                    filtro_prob_minima, # <-- O valor do slider
-                                    filtro_valor_minimo # <-- O valor fixo
+                                    probs_robo, odds_manuais, 
+                                    filtro_prob_minima, filtro_valor_minimo
                                 )
                                 
                                 if oportunidades:
                                     st.success("🔥 OPORTUNIDADES DE VALOR ENCONTRADAS!")
-                                    mensagem = f"🔥 <b>Oportunidade (Valor e Probabilidade)</b> 🔥\n\n"
+                                    mensagem = f"🔥 <b>Oportunidade ({MODO_CEREBRO})</b> 🔥\n\n"
                                     mensagem += f"<b>Liga:</b> {liga_selecionada_nome}\n"
                                     mensagem += f"<b>Jogo:</b> {jogo['time_casa']} vs {jogo['time_visitante']}\n"
                                     
                                     for mercado, dados in oportunidades.items():
                                         mercado_limpo = nomes_mercado.get(mercado, mercado)
                                         st.subheader(f"Mercado: {mercado_limpo}")
-                                        # --- ATUALIZADO O TEXTO ---
                                         st.text(f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)")
-                                        st.text(f"  Probabilidade: {dados['prob_robo']:.2f}%") # <-- MUDANÇA
-                                        st.text(f"  Valor: +{dados['valor_encontrado']:.2f}%")
+                                        st.text(f"  Probabilidade: {dados['prob_robo']:.2f}%")
+*_                                        st.text(f"  Valor: +{dados['valor_encontrado']:.2f}%")
                                         
                                         mensagem += f"\n<b>Mercado: {mercado_limpo}</b>\n"
                                         mensagem += f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)\n"
-                                        mensagem += f"  <b>Probabilidade: {dados['prob_robo']:.2f}%</b>\n" # <-- MUDANÇA
+                                        mensagem += f"  <b>Probabilidade: {dados['prob_robo']:.2f}%</b>\n"
                                         mensagem += f"  <b>Valor: +{dados['valor_encontrado']:.2f}%</b>\n"
                                     
                                     enviar_mensagem_telegram(mensagem)
                                 else:
                                     st.info(f"Nenhuma oportunidade de valor (com >{filtro_prob_minima_percentual}% de prob.) encontrada.")
-                                
                             else:
                                 st.error("Não foi possível calcular as probabilidades do robô (Times novos ou erro no Cérebro).")
