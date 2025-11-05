@@ -1,0 +1,80 @@
+{
+    "liga": "PPL",
+    "temporada": 2025,
+    "data_treinamento": "2025-11-05T16:40:18.039713",
+    "vantagem_casa": 0.04314051116698222,
+    "forcas": {
+        "AVS": {
+            "ataque": 0.3702777136845056,
+            "defesa": -0.0614792327736896
+        },
+        "CD Nacional": {
+            "ataque": 0.9323548859245545,
+            "defesa": -0.9263223910623367
+        },
+        "CD Santa Clara": {
+            "ataque": 0.5417912818888047,
+            "defesa": -0.9072335464545368
+        },
+        "CD Tondela": {
+            "ataque": 0.32484819512869456,
+            "defesa": -0.43851257559427953
+        },
+        "CF Estrela da Amadora": {
+            "ataque": 0.8274661663074315,
+            "defesa": -0.7060916945960313
+        },
+        "Casa Pia AC": {
+            "ataque": 0.9504290528302209,
+            "defesa": -0.3318184254886494
+        },
+        "FC Alverca": {
+            "ataque": 0.9401931102537434,
+            "defesa": -0.5082911732795166
+        },
+        "FC Arouca": {
+            "ataque": 0.8267422166959912,
+            "defesa": -0.22073218629776886
+        },
+        "FC Famalicão": {
+            "ataque": 0.6961014062457794,
+            "defesa": -1.9180184254432586
+        },
+        "FC Porto": {
+            "ataque": 1.6638963434072016,
+            "defesa": -2.3806594153325507
+        },
+        "GD Estoril Praia": {
+            "ataque": 1.078251251787742,
+            "defesa": -0.6961906732241688
+        },
+        "Gil Vicente FC": {
+            "ataque": 1.4372040165331474,
+            "defesa": -2.0477264238182706
+        },
+        "Moreirense FC": {
+            "ataque": 1.1856830451650977,
+            "defesa": -0.9148509275069987
+        },
+        "Rio Ave FC": {
+            "ataque": 1.164627085938195,
+            "defesa": -0.5077347059737204
+        },
+        "Sport Lisboa e Benfica": {
+            "ataque": 1.371631595079413,
+            "defesa": -1.9339208128519563
+        },
+        "Sporting Clube de Braga": {
+            "ataque": 1.2334984079361746,
+            "defesa": -1.1551858228518852
+        },
+        "Sporting Clube de Portugal": {
+            "ataque": 1.6583215625823824,
+            "defesa": -1.7638823327706
+        },
+        "Vitória SC": {
+            "ataque": 0.8043767098642872,
+            "defesa": -0.5736769143457856
+        }
+    }
+}

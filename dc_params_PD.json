@@ -1,0 +1,88 @@
+{
+    "liga": "PD",
+    "temporada": 2025,
+    "data_treinamento": "2025-11-05T16:35:33.144075",
+    "vantagem_casa": 0.2976370931069346,
+    "forcas": {
+        "Athletic Club": {
+            "ataque": 0.7325642602138501,
+            "defesa": -0.9825208830696298
+        },
+        "CA Osasuna": {
+            "ataque": 0.6794622909984622,
+            "defesa": -1.2383356172553515
+        },
+        "Club Atlético de Madrid": {
+            "ataque": 1.5590332774015592,
+            "defesa": -1.381774856129574
+        },
+        "Deportivo Alavés": {
+            "ataque": 0.7463246782073445,
+            "defesa": -1.2919230767830616
+        },
+        "Elche CF": {
+            "ataque": 0.8711790188166556,
+            "defesa": -1.1311275886337695
+        },
+        "FC Barcelona": {
+            "ataque": 1.6016668358572284,
+            "defesa": -0.993986639865447
+        },
+        "Getafe CF": {
+            "ataque": 0.7760713755989168,
+            "defesa": -1.050237962332865
+        },
+        "Girona FC": {
+            "ataque": 0.6141789019350247,
+            "defesa": -0.4496739547149993
+        },
+        "Levante UD": {
+            "ataque": 1.136930732321141,
+            "defesa": -0.5787072024615281
+        },
+        "RC Celta de Vigo": {
+            "ataque": 0.9910875275187149,
+            "defesa": -0.9457061993906781
+        },
+        "RCD Espanyol de Barcelona": {
+            "ataque": 1.1023048773334658,
+            "defesa": -0.9888066668713402
+        },
+        "RCD Mallorca": {
+            "ataque": 0.844995707160894,
+            "defesa": -0.9212274533568737
+        },
+        "Rayo Vallecano de Madrid": {
+            "ataque": 0.9038183316833153,
+            "defesa": -1.0761374015771192
+        },
+        "Real Betis Balompié": {
+            "ataque": 1.373588238941465,
+            "defesa": -1.117888474258595
+        },
+        "Real Madrid CF": {
+            "ataque": 1.6383419528378527,
+            "defesa": -1.3208680157228838
+        },
+        "Real Oviedo": {
+            "ataque": 0.3205226167028566,
+            "defesa": -0.6813143924034171
+        },
+        "Real Sociedad de Fútbol": {
+            "ataque": 0.9355252197725852,
+            "defesa": -0.8920476130922969
+        },
+        "Sevilla FC": {
+            "ataque": 1.3057649014669461,
+            "defesa": -0.6796800938248886
+        },
+        "Valencia CF": {
+            "ataque": 0.7234430680971765,
+            "defesa": -0.6413603765916511
+        },
+        "Villarreal CF": {
+            "ataque": 1.4355992943165696,
+            "defesa": -1.3442247945109214
+        }
+    }
+}

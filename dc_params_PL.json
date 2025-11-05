@@ -1,0 +1,88 @@
+{
+    "liga": "PL",
+    "temporada": 2025,
+    "data_treinamento": "2025-11-05T16:44:03.352084",
+    "vantagem_casa": 0.3401358631266657,
+    "forcas": {
+        "AFC Bournemouth": {
+            "ataque": 1.224604752974098,
+            "defesa": -0.8793431279284095
+        },
+        "Arsenal FC": {
+            "ataque": 1.215667390206501,
+            "defesa": -2.4515661195737675
+        },
+        "Aston Villa FC": {
+            "ataque": 0.7640788489962389,
+            "defesa": -1.2614973899220068
+        },
+        "Brentford FC": {
+            "ataque": 1.1448068937758977,
+            "defesa": -0.78280537064146
+        },
+        "Brighton & Hove Albion FC": {
+            "ataque": 1.2975545610538388,
+            "defesa": -0.8171532809688868
+        },
+        "Burnley FC": {
+            "ataque": 1.0131004574789706,
+            "defesa": -0.5739137255423558
+        },
+        "Chelsea FC": {
+            "ataque": 1.3139444632428756,
+            "defesa": -1.1666413969611158
+        },
+        "Crystal Palace FC": {
+            "ataque": 1.1124014270914082,
+            "defesa": -1.3060101643644701
+        },
+        "Everton FC": {
+            "ataque": 0.7340227753142117,
+            "defesa": -0.9462987833095408
+        },
+        "Fulham FC": {
+            "ataque": 0.9152797729925942,
+            "defesa": -0.8933338276349972
+        },
+        "Leeds United FC": {
+            "ataque": 0.5637615696824869,
+            "defesa": -0.6429148563745187
+        },
+        "Liverpool FC": {
+            "ataque": 1.441613446553556,
+            "defesa": -0.9271084346635736
+        },
+        "Manchester City FC": {
+            "ataque": 1.4242317707166527,
+            "defesa": -1.4762820309882982
+        },
+        "Manchester United FC": {
+            "ataque": 1.3761904621927086,
+            "defesa": -0.8473597217775863
+        },
+        "Newcastle United FC": {
+            "ataque": 0.6450122531867896,
+            "defesa": -1.0485434595709213
+        },
+        "Nottingham Forest FC": {
+            "ataque": 0.3863467690933795,
+            "defesa": -0.6297133596744793
+        },
+        "Sunderland AFC": {
+            "ataque": 0.7637098255456183,
+            "defesa": -1.3963061382795816
+        },
+        "Tottenham Hotspur FC": {
+            "ataque": 1.1382044569547598,
+            "defesa": -1.406524178432577
+        },
+        "West Ham United FC": {
+            "ataque": 0.8995895499066875,
+            "defesa": -0.37149306153291634
+        },
+        "Wolverhampton Wanderers FC": {
+            "ataque": 0.4044203642885253,
+            "defesa": -0.39665203041476726
+        }
+    }
+}

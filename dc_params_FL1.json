@@ -1,0 +1,80 @@
+{
+    "liga": "FL1",
+    "temporada": 2025,
+    "data_treinamento": "2025-11-05T16:38:07.730341",
+    "vantagem_casa": 0.44977849712352697,
+    "forcas": {
+        "AJ Auxerre": {
+            "ataque": 0.23355957066226074,
+            "defesa": -0.9727574504292136
+        },
+        "AS Monaco FC": {
+            "ataque": 1.34155507347781,
+            "defesa": -0.7015111974573736
+        },
+        "Angers SCO": {
+            "ataque": 0.29962995928957425,
+            "defesa": -1.2149499786526952
+        },
+        "FC Lorient": {
+            "ataque": 0.9146430747344382,
+            "defesa": -0.533146662692211
+        },
+        "FC Metz": {
+            "ataque": 0.7538345893220711,
+            "defesa": -0.5368464009221247
+        },
+        "FC Nantes": {
+            "ataque": 0.5198851084967371,
+            "defesa": -0.9299945602668962
+        },
+        "Le Havre AC": {
+            "ataque": 0.7039333169623042,
+            "defesa": -1.0361042906417217
+        },
+        "Lille OSC": {
+            "ataque": 1.4086280020095947,
+            "defesa": -1.0562922182381433
+        },
+        "OGC Nice": {
+            "ataque": 1.0751080971201818,
+            "defesa": -0.975999928985124
+        },
+        "Olympique Lyonnais": {
+            "ataque": 1.087137816245393,
+            "defesa": -1.3203780455471015
+        },
+        "Olympique de Marseille": {
+            "ataque": 1.550060568193914,
+            "defesa": -1.2786838369224296
+        },
+        "Paris FC": {
+            "ataque": 1.1581942744460414,
+            "defesa": -0.7622258825273215
+        },
+        "Paris Saint-Germain FC": {
+            "ataque": 1.4048483950917872,
+            "defesa": -1.5413330850950526
+        },
+        "RC Strasbourg Alsace": {
+            "ataque": 1.4602024854332178,
+            "defesa": -0.9524603970216821
+        },
+        "Racing Club de Lens": {
+            "ataque": 1.0695640149186598,
+            "defesa": -1.4050943946746175
+        },
+        "Stade Brestois 29": {
+            "ataque": 0.9949414245414541,
+            "defesa": -0.7353480869065763
+        },
+        "Stade Rennais FC 1901": {
+            "ataque": 1.2870006691656521,
+            "defesa": -0.7323936018857025
+        },
+        "Toulouse FC": {
+            "ataque": 1.0643353922983088,
+            "defesa": -0.987391066276725
+        }
+    }
+}
