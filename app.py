@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 4.4 - Correção do SyntaxError)
-# CORRIGIDO: Removida a linha ' *_' que quebrou o deploy.
+# O Robô de Análise (Versão 4.5 - Design de Métricas)
+# UPGRADE: Resultados agora usam st.metric para um visual de dashboard
 
 import streamlit as st
 import requests
@@ -51,6 +51,7 @@ def carregar_cerebro_dixon_coles(id_liga):
         return None
 
 def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
+    # (Função idêntica)
     try:
         forcas = dados_cerebro['forcas']
         vantagem_casa = dados_cerebro['vantagem_casa']
@@ -96,6 +97,7 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
 
 @st.cache_data 
 def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
+    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"season": str(temporada), "status": "FINISHED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -126,6 +128,7 @@ def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
     return df_liga, medias_liga
 
 def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
+    # (Função idêntica)
     data_do_jogo_dt = pd.to_datetime(data_do_jogo)
     df_passado = df_historico[df_historico['data_jogo'] < data_do_jogo_dt]
     jogos_casa_recente = df_passado[df_passado['TimeCasa'] == time_casa].tail(num_jogos)
@@ -144,6 +147,7 @@ def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, dat
     return forcas_times
 
 def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
+    # (Função idêntica)
     forca_ataque_casa = forcas_times[time_casa]['ataque_casa_media'] / medias_liga['media_gols_casa']
     forca_defesa_casa = forcas_times[time_casa]['defesa_casa_media'] / medias_liga['media_gols_visitante']
     forca_ataque_visitante = forcas_times[time_visitante]['ataque_visitante_media'] / medias_liga['media_gols_visitante']
@@ -176,6 +180,7 @@ def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
     }
 
 def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.60, filtro_valor_minimo=0.05):
+    # (Função idêntica)
     oportunidades = {}
     for mercado, odd in odds_casa.items():
         if odd is None or odd == 0.0 or mercado not in probabilidades_calculadas:
@@ -196,6 +201,7 @@ def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.6
 
 @st.cache_data
 def buscar_jogos_por_data(id_liga, data_str):
+    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"dateFrom": data_str, "dateTo": data_str, "status": "SCHEDULED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -212,6 +218,7 @@ def buscar_jogos_por_data(id_liga, data_str):
     return jogos_do_dia
 
 def enviar_mensagem_telegram(mensagem):
+    # (Função idêntica)
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
         st.warning("Token do Telegram não configurado. Pulando envio.")
         return
@@ -228,7 +235,7 @@ def enviar_mensagem_telegram(mensagem):
     except Exception as e:
         st.error(f"Erro fatal no envio do Telegram: {e}")
 
-# --- A INTERFACE GRÁFICA (Função Principal ATUALIZADA) ---
+# --- A INTERFACE GRÁFICA (Função Principal) ---
 
 LIGAS_DISPONIVEIS = {
     "Brasileirão": "BSA",
@@ -241,6 +248,7 @@ LIGAS_DISPONIVEIS = {
     "Championship (ING 2)": "ELC"
 }
 
+# --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("Controles do Robô 🤖")
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
@@ -360,16 +368,33 @@ if MODO_CEREBRO != "FALHA":
                                     mensagem += f"<b>Liga:</b> {liga_selecionada_nome}\n"
                                     mensagem += f"<b>Jogo:</b> {jogo['time_casa']} vs {jogo['time_visitante']}\n"
                                     
+                                    # --- ESTA É A SEÇÃO ATUALIZADA (MELHORIA 2) ---
                                     for mercado, dados in oportunidades.items():
                                         mercado_limpo = nomes_mercado.get(mercado, mercado)
                                         st.subheader(f"Mercado: {mercado_limpo}")
-                                        st.text(f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)")
-                                        st.text(f"  Probabilidade: {dados['prob_robo']:.2f}%") 
                                         
-                                        # --- ESTA É A LINHA CORRIGIDA ---
-                                        st.text(f"  Valor: +{dados['valor_encontrado']:.2f}%")
-                                        # ----------------------------------
-                                        
+                                        # Cria 3 colunas para as métricas
+                                        col_met1, col_met2, col_met3 = st.columns(3)
+                                        with col_met1:
+                                            st.metric(
+                                                label="Odd (Casa %)", 
+                                                value=f"{dados['odd_casa']:.2f}",
+                                                delta=f"{dados['prob_casa_aposta']:.1f}% da Casa",
+                                                delta_color="off" # Cor neutra
+                                            )
+                                        with col_met2:
+                                            st.metric(
+                                                label="Probabilidade (Robô)",
+                                                value=f"{dados['prob_robo']:.2f}%"
+                                            )
+                                        with col_met3:
+                                            st.metric(
+                                                label="Valor Encontrado",
+                                                value=f"+{dados['valor_encontrado']:.2f}%",
+                                                delta_color="normal" # Verde para positivo
+                                            )
+
+                                        # (A mensagem do Telegram não muda)
                                         mensagem += f"\n<b>Mercado: {mercado_limpo}</b>\n"
                                         mensagem += f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)\n"
                                         mensagem += f"  <b>Probabilidade: {dados['prob_robo']:.2f}%</b>\n"
