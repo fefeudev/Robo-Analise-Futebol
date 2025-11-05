@@ -1,0 +1,80 @@
+{
+    "liga": "BL1",
+    "temporada": 2025,
+    "data_treinamento": "2025-11-05T17:26:31.099804",
+    "vantagem_casa": 0.12192669484818541,
+    "forcas": {
+        "1. FC Heidenheim 1846": {
+            "ataque": 0.5976843003571229,
+            "defesa": -0.6785076129850363
+        },
+        "1. FC Köln": {
+            "ataque": 1.3442922217436826,
+            "defesa": -0.9295097430680809
+        },
+        "1. FC Union Berlin": {
+            "ataque": 0.9358370988194309,
+            "defesa": -0.7568105005872018
+        },
+        "1. FSV Mainz 05": {
+            "ataque": 0.9024348732929998,
+            "defesa": -0.5909320361477579
+        },
+        "Bayer 04 Leverkusen": {
+            "ataque": 1.3823530846572512,
+            "defesa": -0.8677774260258557
+        },
+        "Borussia Dortmund": {
+            "ataque": 1.2285442489014367,
+            "defesa": -1.7181484020798106
+        },
+        "Borussia Mönchengladbach": {
+            "ataque": 0.898726315453663,
+            "defesa": -0.5917786646140019
+        },
+        "Eintracht Frankfurt": {
+            "ataque": 1.6446763186416127,
+            "defesa": -0.4984086855008268
+        },
+        "FC Augsburg": {
+            "ataque": 1.1417314777546148,
+            "defesa": -0.404017006592711
+        },
+        "FC Bayern München": {
+            "ataque": 2.0032906417983773,
+            "defesa": -2.1604732276398093
+        },
+        "FC St. Pauli 1910": {
+            "ataque": 0.5157278130622607,
+            "defesa": -0.5716098204050529
+        },
+        "Hamburger SV": {
+            "ataque": 0.642645070696903,
+            "defesa": -0.7640378576680065
+        },
+        "RB Leipzig": {
+            "ataque": 1.5688567099953479,
+            "defesa": -1.1889161224088205
+        },
+        "SC Freiburg": {
+            "ataque": 0.8286380922185614,
+            "defesa": -0.9682777567190404
+        },
+        "SV Werder Bremen": {
+            "ataque": 1.0714322128591895,
+            "defesa": -0.6526650797278113
+        },
+        "TSG 1899 Hoffenheim": {
+            "ataque": 1.460572285286589,
+            "defesa": -0.7887859376861138
+        },
+        "VfB Stuttgart": {
+            "ataque": 1.1344433015217115,
+            "defesa": -0.9815211693302816
+        },
+        "VfL Wolfsburg": {
+            "ataque": 0.9573367866089993,
+            "defesa": -0.6287147975713377
+        }
+    }
+}
