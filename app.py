@@ -1,27 +1,27 @@
 # app.py
-# O Robô de Análise (Versão 4.1 - Sem Bandeiras)
-# Pronto para o Deploy na Nuvem
+# O Robô de Análise (Versão 4.0 - CÉREBRO HÍBRIDO)
+# MODELO: Tenta usar Dixon-Coles (do .json). Se falhar, usa Poisson (Forma Recente).
 
 import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from scipy.stats import poisson
-import config # Importa o NOVO config.py que lê os "Secrets"
+import scipy.stats as stats # Usamos 'stats' para ambos os modelos
+import config 
 import time
 from datetime import datetime
+import json
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô de Valor",
-    page_icon="⚽",
+    page_title="Robô de Valor (Híbrido)",
+    page_icon="🤖",
     layout="wide"
 )
 
 # --- FUNÇÕES GLOBAIS DE API (football-data.org) ---
 @st.cache_data 
 def criar_headers_api():
-    # Lê a chave que o config.py pegou dos "Secrets"
     return {"X-Auth-Token": config.API_KEY}
 
 def fazer_requisicao_api(endpoint, params):
@@ -30,26 +30,112 @@ def fazer_requisicao_api(endpoint, params):
         response = requests.get(url, headers=criar_headers_api(), params=params)
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.HTTPError as http_err:
-        st.error(f"Erro HTTP: {http_err}. Verifique sua API Key ou os parâmetros.")
-        st.code(f"Resposta da API: {response.text}")
     except Exception as e:
-        st.error(f"Erro na requisição: {e}")
+        st.error(f"Erro de API: {e}")
     return None
 
-# --- ETAPA 1 (CÉREBRO) ---
-@st.cache_data 
-def carregar_e_treinar_cerebro(id_liga, temporada):
+# --- ETAPA 1 (CÉREBRO HÍBRIDO) ---
+
+# --- CÉREBRO 1A: DIXON-COLES (Avançado) ---
+@st.cache_data
+def carregar_cerebro_dixon_coles(id_liga):
     """
-    Função unificada que baixa os dados e calcula as médias.
-    É cacheada pelo Streamlit para velocidade.
+    Tenta carregar os parâmetros pré-treinados do arquivo JSON.
+    Se não encontrar, retorna None.
+    """
+    nome_arquivo = f"dc_params_{id_liga}.json"
+    try:
+        with open(nome_arquivo, 'r', encoding='utf-8') as f:
+            dados_cerebro = json.load(f)
+            print(f"Cérebro Dixon-Coles ({id_liga}) carregado do arquivo.")
+            return dados_cerebro
+    except FileNotFoundError:
+        print(f"Arquivo 'dc_params_{id_liga}.json' não encontrado. Usando Cérebro Poisson.")
+        return None # <-- IMPORTANTE: Retorna None se o arquivo não existir
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo de Cérebro: {e}")
+        return None
+
+def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
+    """
+    Roda a *previsão* do Dixon-Coles usando os parâmetros treinados.
+    """
+    try:
+        forcas = dados_cerebro['forcas']
+        vantagem_casa = dados_cerebro['vantagem_casa']
+        # 'rho' não está no nosso modelo estável, então não o usamos.
+        rho = dados_cerebro.get('rho', 0.0) # Pega o 'rho' se existir, senão usa 0
+        
+        ataque_casa = forcas[time_casa]['ataque']
+        defesa_casa = forcas[time_casa]['defesa']
+        ataque_visitante = forcas[time_visitante]['ataque']
+        defesa_visitante = forcas[time_visitante]['defesa']
+
+        lambda_casa = np.exp(ataque_casa + defesa_visitante + vantagem_casa)
+        mu_visitante = np.exp(ataque_visitante + defesa_casa)
+    
+    except KeyError as e:
+        st.warning(f"Aviso (DC): Time '{e.args[0]}' não foi encontrado no Cérebro (time novo?). Pulando.")
+        return None
+    
+    def tau(gols_casa, gols_visitante, lambda_casa, mu_visit, rho):
+        # Se o 'rho' for 0 (porque usamos o modelo estável), esta função não faz nada
+        if rho == 0.0:
+            return 1.0
+        if gols_casa == 0 and gols_visitante == 0:
+            return 1 - (lambda_casa * mu_visit * rho)
+        elif gols_casa == 1 and gols_visitante == 0:
+            return 1 + (lambda_casa * rho)
+        elif gols_casa == 0 and gols_visitante == 1:
+            return 1 + (mu_visit * rho)
+        elif gols_casa == 1 and gols_visitante == 1:
+            return 1 - rho
+        else:
+            return 1.0
+            
+    prob_vitoria_casa, prob_empate, prob_vitoria_visitante = 0.0, 0.0, 0.0
+    prob_over_2_5, prob_btts_sim = 0.0, 0.0
+    soma_total_probs = 0.0
+
+    for i in range(config.MAX_GOLS_CALCULO + 1): 
+        for j in range(config.MAX_GOLS_CALCULO + 1):
+            prob_placar = (
+                stats.poisson.pmf(i, lambda_casa) *
+                stats.poisson.pmf(j, mu_visitante) *
+                tau(i, j, lambda_casa, mu_visitante, rho)
+            )
+            soma_total_probs += prob_placar
+            if i > j: prob_vitoria_casa += prob_placar
+            elif i == j: prob_empate += prob_placar
+            elif j > i: prob_vitoria_visitante += prob_placar
+            if (i + j) > 2.5: prob_over_2_5 += prob_placar
+            if (i > 0 and j > 0): prob_btts_sim += prob_placar
+
+    if soma_total_probs == 0: return None
+    
+    prob_dc_1x = prob_vitoria_casa + prob_empate
+    prob_dc_x2 = prob_empate + prob_vitoria_visitante
+    prob_dc_12 = prob_vitoria_casa + prob_vitoria_visitante
+
+    return {
+        'vitoria_casa': prob_vitoria_casa / soma_total_probs, 'empate': prob_empate / soma_total_probs,
+        'vitoria_visitante': prob_vitoria_visitante / soma_total_probs, 'over_2_5': prob_over_2_5 / soma_total_probs,
+        'btts_sim': prob_btts_sim / soma_total_probs, 'chance_dupla_1X': prob_dc_1x / soma_total_probs,
+        'chance_dupla_X2': prob_dc_x2 / soma_total_probs, 'chance_dupla_12': prob_dc_12 / soma_total_probs,
+    }
+
+# --- CÉREBRO 1B: POISSON "FORMA RECENTE" (O "Fallback") ---
+@st.cache_data 
+def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
+    """
+    Função de "Fallback". Baixa os dados e calcula as médias.
     """
     endpoint = f"competitions/{id_liga}/matches"
     params = {"season": str(temporada), "status": "FINISHED"}
     dados = fazer_requisicao_api(endpoint, params)
     
     if not dados or "matches" not in dados or not dados["matches"]:
-        st.error(f"Erro: A API não retornou 'matches' (jogos) para o histórico da liga {id_liga}.")
+        st.error(f"Erro (Poisson): A API não retornou 'matches' para o histórico da liga {id_liga}.")
         return None, None
 
     lista_jogos = []
@@ -69,7 +155,7 @@ def carregar_e_treinar_cerebro(id_liga, temporada):
     df_liga = df_liga.sort_values(by='data_jogo')
     
     if len(df_liga) < 10:
-        st.error(f"Erro de Treinamento: A liga {id_liga} tem menos de 10 jogos no histórico. Não é possível analisar.")
+        st.error(f"Erro de Treinamento (Poisson): A liga {id_liga} tem menos de 10 jogos no histórico.")
         return None, None
         
     medias_liga = {
@@ -79,14 +165,13 @@ def carregar_e_treinar_cerebro(id_liga, temporada):
     
     return df_liga, medias_liga
 
-# (Funções de cálculo - idênticas)
-def calcular_forcas_recente(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
+def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
     data_do_jogo_dt = pd.to_datetime(data_do_jogo)
     df_passado = df_historico[df_historico['data_jogo'] < data_do_jogo_dt]
     jogos_casa_recente = df_passado[df_passado['TimeCasa'] == time_casa].tail(num_jogos)
     jogos_visitante_recente = df_passado[df_passado['TimeVisitante'] == time_visitante].tail(num_jogos)
     if len(jogos_casa_recente) < 1 or len(jogos_visitante_recente) < 1:
-        st.warning(f"Aviso: Times novos. {time_casa} ou {time_visitante} têm menos de 1 jogo no histórico. Pulando.")
+        st.warning(f"Aviso (Poisson): Times novos. {time_casa} ou {time_visitante} têm menos de 1 jogo no histórico. Pulando.")
         return None
     ataque_casa_media = jogos_casa_recente['GolsCasa'].mean()
     defesa_casa_media = jogos_casa_recente['GolsVisitante'].mean()
@@ -98,16 +183,16 @@ def calcular_forcas_recente(df_historico, time_casa, time_visitante, data_do_jog
     }
     return forcas_times
 
-def prever_jogo(forcas_times, medias_liga, time_casa, time_visitante):
-    # (Função idêntica, calcula chance dupla)
+def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
+    # (Esta é a função de previsão do nosso robô "Versão 3.0")
     forca_ataque_casa = forcas_times[time_casa]['ataque_casa_media'] / medias_liga['media_gols_casa']
     forca_defesa_casa = forcas_times[time_casa]['defesa_casa_media'] / medias_liga['media_gols_visitante']
     forca_ataque_visitante = forcas_times[time_visitante]['ataque_visitante_media'] / medias_liga['media_gols_visitante']
     forca_defesa_visitante = forcas_times[time_visitante]['defesa_visitante_media'] / medias_liga['media_gols_casa']
     xg_casa = (forca_ataque_casa * forca_defesa_visitante * medias_liga['media_gols_casa'])
     xg_visitante = (forca_ataque_visitante * forca_defesa_casa * medias_liga['media_gols_visitante'])
-    prob_gols_casa = [poisson.pmf(i, xg_casa) for i in range(config.MAX_GOLS_CALCULO + 1)]
-    prob_gols_visitante = [poisson.pmf(i, xg_visitante) for i in range(config.MAX_GOLS_CALCULO + 1)]
+    prob_gols_casa = [stats.poisson.pmf(i, xg_casa) for i in range(config.MAX_GOLS_CALCULO + 1)]
+    prob_gols_visitante = [stats.poisson.pmf(i, xg_visitante) for i in range(config.MAX_GOLS_CALCULO + 1)]
     matriz_placar = np.outer(prob_gols_casa, prob_gols_visitante)
     prob_vitoria_casa = np.sum(np.tril(matriz_placar, -1))
     prob_empate = np.sum(np.diag(matriz_placar))
@@ -124,14 +209,14 @@ def prever_jogo(forcas_times, medias_liga, time_casa, time_visitante):
     prob_dc_1x = prob_vitoria_casa + prob_empate
     prob_dc_x2 = prob_empate + prob_vitoria_visitante
     prob_dc_12 = prob_vitoria_casa + prob_vitoria_visitante
-    probabilidades_mercado = {
+    return {
         'vitoria_casa': prob_vitoria_casa / soma_total_probs, 'empate': prob_empate / soma_total_probs,
         'vitoria_visitante': prob_vitoria_visitante / soma_total_probs, 'over_2_5': prob_over_2_5 / soma_total_probs,
         'btts_sim': prob_btts_sim / soma_total_probs, 'chance_dupla_1X': prob_dc_1x / soma_total_probs,
         'chance_dupla_X2': prob_dc_x2 / soma_total_probs, 'chance_dupla_12': prob_dc_12 / soma_total_probs,
     }
-    return probabilidades_mercado
 
+# --- FUNÇÕES COMPARTILHADAS (Encontrar Valor, Coleta, Telegram) ---
 def encontrar_valor(probabilidades_calculadas, odds_casa):
     # (Função idêntica)
     oportunidades = {}
@@ -150,7 +235,6 @@ def encontrar_valor(probabilidades_calculadas, odds_casa):
             }
     return oportunidades
 
-# --- ETAPA 2 (COLETA) ---
 @st.cache_data
 def buscar_jogos_por_data(id_liga, data_str):
     # (Função idêntica)
@@ -169,7 +253,6 @@ def buscar_jogos_por_data(id_liga, data_str):
         jogos_do_dia.append(jogo)
     return jogos_do_dia
 
-# --- ETAPA 3: O MENSAGEIRO ---
 def enviar_mensagem_telegram(mensagem):
     # (Função idêntica)
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
@@ -190,51 +273,73 @@ def enviar_mensagem_telegram(mensagem):
 
 # --- A INTERFACE GRÁFICA (Função Principal ATUALIZADA) ---
 
-# --- ESTA É A ÚNICA SEÇÃO MODIFICADA ---
-# Dicionário de Ligas (AGORA SEM BANDEIRAS)
+# Dicionário de Ligas
 LIGAS_DISPONIVEIS = {
-    "Brasileirao": "BSA",
+    "Brasileirão": "BSA",
     "Premier League (ING)": "PL",
-    "Champions League": "CL",
     "La Liga (ESP)": "PD",
     "Serie A (ITA)": "SA",
     "Bundesliga (ALE)": "BL1",
     "Ligue 1 (FRA)": "FL1",
     "Eredivisie (HOL)": "DED",
     "Championship (ING 2)": "ELC"
+    # (Removemos a "CL" pois ambos os modelos falham com ela)
 }
 
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
-    st.title("Controles do Robô ⚙️")
+    st.title("Controles do Robô 🤖")
     
-    # Seletor de Liga
     liga_selecionada_nome = st.selectbox(
         "1. Selecione a Liga:",
         LIGAS_DISPONIVEIS.keys() 
     )
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
-    
     TEMPORADA_ATUAL = config.TEMPORADA_PARA_ANALISAR 
 
-    with st.spinner(f"Treinando Cérebro para {LIGA_ATUAL}... (Pode levar alguns segundos)"):
-        df_historico, medias_liga = carregar_e_treinar_cerebro(LIGA_ATUAL, TEMPORADA_ATUAL)
+    # --- LÓGICA HÍBRIDA (A MÁGICA) ---
+    st.header("Cérebro do Robô")
     
-    if df_historico is None:
-        st.error(f"Falha ao carregar dados da {LIGA_ATUAL}.")
+    # Tenta carregar o Cérebro Avançado (Dixon-Coles)
+    with st.spinner(f"Tentando carregar Cérebro Dixon-Coles para {LIGA_ATUAL}..."):
+        dados_cerebro_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
+    
+    if dados_cerebro_dc is not None:
+        # SUCESSO! Encontrou o .json
+        st.success(f"Cérebro Avançado (Dixon-Coles) carregado!")
+        st.caption(f"Treinado em: {dados_cerebro_dc['data_treinamento'].split('T')[0]}")
+        MODO_CEREBRO = "DIXON_COLES"
+        # (Neste caso, não precisamos de df_historico ou medias_liga)
+        df_historico_poisson = None
+        medias_liga_poisson = None
+        
     else:
-        st.success(f"Cérebro treinado com {len(df_historico)} jogos.")
-        st.header("2. Buscar Jogos")
-        data_selecionada = st.date_input(
-            "Selecione a data para analisar:",
-            datetime.now()
-        )
+        # FALHA! Não achou o .json (ex: "BSA"). Vamos usar o "Fallback".
+        st.warning(f"Cérebro Dixon-Coles não encontrado para {LIGA_ATUAL}.")
+        st.info("Usando Cérebro de 'Forma Recente' (Poisson) como fallback.")
+        
+        with st.spinner(f"Treinando Cérebro Poisson para {LIGA_ATUAL}..."):
+            df_historico_poisson, medias_liga_poisson = carregar_e_treinar_cerebro_poisson(LIGA_ATUAL, TEMPORADA_ATUAL)
+        
+        if df_historico_poisson is None:
+            st.error(f"Falha ao carregar dados da {LIGA_ATUAL}.")
+            MODO_CEREBRO = "FALHA"
+        else:
+            st.success(f"Cérebro Poisson treinado com {len(df_historico_poisson)} jogos.")
+            MODO_CEREBRO = "POISSON_RECENTE"
+
+    st.header("2. Buscar Jogos")
+    data_selecionada = st.date_input(
+        "Selecione a data para analisar:",
+        datetime.now()
+    )
     
 # --- 2. PÁGINA PRINCIPAL ---
-st.title("Robô de Análise de Valor ⚽")
+st.title("Robô de Análise de Valor (Híbrido) 🧠")
 st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')} na Liga: {LIGA_ATUAL}")
+st.caption(f"Usando Cérebro: {MODO_CEREBRO}") # Mostra qual cérebro está ativo
 
-if df_historico is not None:
+if MODO_CEREBRO != "FALHA":
     data_str = data_selecionada.strftime('%Y-%m-%d')
     jogos_do_dia = buscar_jogos_por_data(LIGA_ATUAL, data_str)
 
@@ -251,31 +356,22 @@ if df_historico is not None:
         for i, jogo in enumerate(jogos_do_dia):
             with st.expander(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}"):
                 with st.form(key=f"form_jogo_{i}"):
+                    # (Layout do formulário idêntico)
                     st.write("**Mercado 1X2**")
                     col1, col2, col3 = st.columns(3)
-                    with col1:
-                        odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
-                    with col2:
-                        odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
-                    with col3:
-                        odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
-                    
+                    with col1: odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
+                    with col2: odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
+                    with col3: odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
                     st.write("**Chance Dupla**")
                     col_dc1, col_dc2, col_dc3 = st.columns(3)
-                    with col_dc1:
-                        odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
-                    with col_dc2:
-                        odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
-                    with col_dc3:
-                        odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
-                    
+                    with col_dc1: odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
+                    with col_dc2: odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
+                    with col_dc3: odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
                     st.write("**Gols**")
                     col4, col5 = st.columns(2)
-                    with col4:
-                        odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
-                    with col5:
-                        odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
-
+                    with col4: odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
+                    with col5: odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
+                    
                     submitted = st.form_submit_button("Analisar este Jogo")
 
                     if submitted:
@@ -286,41 +382,54 @@ if df_historico is not None:
                                 'chance_dupla_1X': odd_1x, 'chance_dupla_X2': odd_x2, 'chance_dupla_12': odd_12
                             }
                             
-                            forcas_times = calcular_forcas_recente(
-                                df_historico, jogo['time_casa'], jogo['time_visitante'], 
-                                jogo['data_jogo'], num_jogos=6 
-                            )
+                            probs_robo = None
                             
-                            if forcas_times:
-                                probs_robo = prever_jogo(
-                                    forcas_times, medias_liga,
-                                    jogo['time_casa'], jogo['time_visitante'] 
+                            # --- LÓGICA HÍBRIDA (A Chamada) ---
+                            if MODO_CEREBRO == "DIXON_COLES":
+                                probs_robo = prever_jogo_dixon_coles(
+                                    dados_cerebro_dc, 
+                                    jogo['time_casa'], 
+                                    jogo['time_visitante']
                                 )
+                            
+                            elif MODO_CEREBRO == "POISSON_RECENTE":
+                                forcas_times = calcular_forcas_recente_poisson(
+                                    df_historico_poisson, 
+                                    jogo['time_casa'], 
+                                    jogo['time_visitante'], 
+                                    jogo['data_jogo']
+                                )
+                                if forcas_times:
+                                    probs_robo = prever_jogo_poisson(
+                                        forcas_times, 
+                                        medias_liga_poisson,
+                                        jogo['time_casa'], 
+                                        jogo['time_visitante'] 
+                                    )
+                            # --------------------------------
+                            
+                            if probs_robo:
+                                oportunidades = encontrar_valor(probs_robo, odds_manuais)
                                 
-                                if probs_robo:
-                                    oportunidades = encontrar_valor(probs_robo, odds_manuais)
+                                if oportunidades:
+                                    st.success("🔥 OPORTUNIDADES DE VALOR ENCONTRADAS!")
+                                    mensagem = f"🔥 <b>Oportunidade ({MODO_CEREBRO})</b> 🔥\n\n"
+                                    mensagem += f"<b>Liga:</b> {liga_selecionada_nome}\n"
+                                    mensagem += f"<b>Jogo:</b> {jogo['time_casa']} vs {jogo['time_visitante']}\n"
                                     
-                                    if oportunidades:
-                                        st.success("🔥 OPORTUNIDADES DE VALOR ENCONTRADAS!")
-                                        mensagem = f"🔥 <b>Oportunidade (Valor)</b> 🔥\n\n"
-                                        mensagem += f"<b>Liga:</b> {liga_selecionada_nome}\n" # Usa o nome bonito
-                                        mensagem += f"<b>Jogo:</b> {jogo['time_casa']} vs {jogo['time_visitante']}\n"
-                                        
-                                        for mercado, dados in oportunidades.items():
-                                            mercado_limpo = nomes_mercado.get(mercado, mercado)
-                                            st.subheader(f"Mercado: {mercado_limpo}")
-                                            st.text(f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)")
-                                            st.text(f"  Robô: {dados['prob_robo']:.2f}%")
-                                            st.text(f"  Valor: +{dados['valor_encontrado']:.2f}%")
-                                            mensagem += f"\n<b>Mercado: {mercado_limpo}</b>\n"
-                                            mensagem += f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)\n"
-                                            mensagem += f"  <b>Robô: {dados['prob_robo']:.2f}%</b>\n"
-                                            mensagem += f"  <b>Valor: +{dados['valor_encontrado']:.2f}%</b>\n"
-                                        
-                                        enviar_mensagem_telegram(mensagem)
-                                    else:
-                                        st.info("Nenhuma oportunidade de valor (com >5%) encontrada para este jogo.")
+                                    for mercado, dados in oportunidades.items():
+                                        mercado_limpo = nomes_mercado.get(mercado, mercado)
+                                        st.subheader(f"Mercado: {mercado_limpo}")
+                                        st.text(f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)")
+                                        st.text(f"  Robô: {dados['prob_robo']:.2f}%")
+                                        st.text(f"  Valor: +{dados['valor_encontrado']:.2f}%")
+                                        mensagem += f"\n<b>Mercado: {mercado_limpo}</b>\n"
+                                        mensagem += f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)\n"
+                                        mensagem += f"  <b>Robô: {dados['prob_robo']:.2f}%</b>\n"
+                                        mensagem += f"  <b>Valor: +{dados['valor_encontrado']:.2f}%</b>\n"
+                                    
+                                    enviar_mensagem_telegram(mensagem)
                                 else:
-                                    st.error("Não foi possível calcular as probabilidades do robô.")
+                                    st.info("Nenhuma oportunidade de valor (com >5%) encontrada para este jogo.")
                             else:
-                                st.error("Não foi possível calcular as forças dos times (dados insuficientes).")
+                                st.error("Não foi possível calcular as probabilidades do robô (Times novos ou erro no Cérebro).")
