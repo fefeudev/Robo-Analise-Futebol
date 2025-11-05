@@ -3,3 +3,4 @@ requests
 pandas
 numpy
 scipy
+telegram-python-bot
