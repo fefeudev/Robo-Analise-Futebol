@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 4.3 - Design de Abas)
-# UPGRADE: Adicionado st.tabs para organizar os formulários de odds
+# O Robô de Análise (Versão 4.4 - Correção do SyntaxError)
+# CORRIGIDO: Removida a linha ' *_' que quebrou o deploy.
 
 import streamlit as st
 import requests
@@ -51,7 +51,6 @@ def carregar_cerebro_dixon_coles(id_liga):
         return None
 
 def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
-    # (Função idêntica, sem 'print')
     try:
         forcas = dados_cerebro['forcas']
         vantagem_casa = dados_cerebro['vantagem_casa']
@@ -97,7 +96,6 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
 
 @st.cache_data 
 def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
-    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"season": str(temporada), "status": "FINISHED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -128,7 +126,6 @@ def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
     return df_liga, medias_liga
 
 def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
-    # (Função idêntica)
     data_do_jogo_dt = pd.to_datetime(data_do_jogo)
     df_passado = df_historico[df_historico['data_jogo'] < data_do_jogo_dt]
     jogos_casa_recente = df_passado[df_passado['TimeCasa'] == time_casa].tail(num_jogos)
@@ -147,7 +144,6 @@ def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, dat
     return forcas_times
 
 def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
-    # (Função idêntica)
     forca_ataque_casa = forcas_times[time_casa]['ataque_casa_media'] / medias_liga['media_gols_casa']
     forca_defesa_casa = forcas_times[time_casa]['defesa_casa_media'] / medias_liga['media_gols_visitante']
     forca_ataque_visitante = forcas_times[time_visitante]['ataque_visitante_media'] / medias_liga['media_gols_visitante']
@@ -180,7 +176,6 @@ def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
     }
 
 def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.60, filtro_valor_minimo=0.05):
-    # (Função idêntica)
     oportunidades = {}
     for mercado, odd in odds_casa.items():
         if odd is None or odd == 0.0 or mercado not in probabilidades_calculadas:
@@ -201,7 +196,6 @@ def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.6
 
 @st.cache_data
 def buscar_jogos_por_data(id_liga, data_str):
-    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"dateFrom": data_str, "dateTo": data_str, "status": "SCHEDULED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -218,7 +212,6 @@ def buscar_jogos_por_data(id_liga, data_str):
     return jogos_do_dia
 
 def enviar_mensagem_telegram(mensagem):
-    # (Função idêntica)
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
         st.warning("Token do Telegram não configurado. Pulando envio.")
         return
@@ -237,7 +230,6 @@ def enviar_mensagem_telegram(mensagem):
 
 # --- A INTERFACE GRÁFICA (Função Principal ATUALIZADA) ---
 
-# Dicionário de Ligas
 LIGAS_DISPONIVEIS = {
     "Brasileirão": "BSA",
     "Premier League (ING)": "PL",
@@ -249,23 +241,15 @@ LIGAS_DISPONIVEIS = {
     "Championship (ING 2)": "ELC"
 }
 
-# --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("Controles do Robô 🤖")
-    
-    liga_selecionada_nome = st.selectbox(
-        "1. Selecione a Liga:",
-        LIGAS_DISPONIVEIS.keys() 
-    )
+    liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
     TEMPORADA_ATUAL = config.TEMPORADA_PARA_ANALISAR 
-
     st.header("2. Cérebro do Robô")
     MODO_CEREBRO = "FALHA" 
-    
     with st.spinner(f"Tentando carregar Cérebro Dixon-Coles para {LIGA_ATUAL}..."):
         dados_cerebro_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
-    
     if dados_cerebro_dc is not None:
         st.success(f"Cérebro Avançado (Dixon-Coles) carregado!")
         st.caption(f"Treinado em: {dados_cerebro_dc['data_treinamento'].split('T')[0]}")
@@ -275,22 +259,15 @@ with st.sidebar:
     else:
         st.warning(f"Cérebro Dixon-Coles não encontrado para {LIGA_ATUAL}.")
         st.info("Usando Cérebro de 'Forma Recente' (Poisson) como fallback.")
-        
         with st.spinner(f"Treinando Cérebro Poisson para {LIGA_ATUAL}..."):
             df_historico_poisson, medias_liga_poisson = carregar_e_treinar_cerebro_poisson(LIGA_ATUAL, TEMPORADA_ATUAL)
-        
         if df_historico_poisson is None:
             st.error(f"Falha ao carregar dados da {LIGA_ATUAL}.")
         else:
             st.success(f"Cérebro Poisson treinado com {len(df_historico_poisson)} jogos.")
             MODO_CEREBRO = "POISSON_RECENTE"
-
     st.header("3. Buscar Jogos")
-    data_selecionada = st.date_input(
-        "Selecione a data para analisar:",
-        datetime.now()
-    )
-    
+    data_selecionada = st.date_input("Selecione a data para analisar:", datetime.now())
     st.header("4. Filtros de Análise")
     filtro_prob_minima_percentual = st.slider(
         "Probabilidade Mínima (Chance de Green)", 
@@ -299,7 +276,6 @@ with st.sidebar:
     filtro_prob_minima = filtro_prob_minima_percentual / 100.0 
     filtro_valor_minimo = 0.05
     
-# --- 2. PÁGINA PRINCIPAL ---
 st.title("Robô de Análise de Valor (Híbrido) 🧠")
 st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')} na Liga: {LIGA_ATUAL}")
 st.caption(f"Usando Cérebro: {MODO_CEREBRO} | Filtro de Probabilidade: > {filtro_prob_minima_percentual}%")
@@ -321,10 +297,8 @@ if MODO_CEREBRO != "FALHA":
         for i, jogo in enumerate(jogos_do_dia):
             with st.expander(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}"):
                 
-                # --- ESTE É O FORMULÁRIO ATUALIZADO (MELHORIA 1) ---
                 with st.form(key=f"form_jogo_{i}"):
                     
-                    # Cria as 3 abas
                     tab_1x2, tab_dc, tab_gols = st.tabs(["📊 Resultado (1x2)", "🤝 Chance Dupla", "⚽ Gols"])
 
                     with tab_1x2:
@@ -347,7 +321,6 @@ if MODO_CEREBRO != "FALHA":
                         with col4: odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
                         with col5: odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
                     
-                    # Botão de submit (fora das abas, dentro do form)
                     submitted = st.form_submit_button("Analisar este Jogo")
 
                     if submitted:
@@ -391,8 +364,11 @@ if MODO_CEREBRO != "FALHA":
                                         mercado_limpo = nomes_mercado.get(mercado, mercado)
                                         st.subheader(f"Mercado: {mercado_limpo}")
                                         st.text(f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)")
-                                        st.text(f"  Probabilidade: {dados['prob_robo']:.2f}%")
-*_                                        st.text(f"  Valor: +{dados['valor_encontrado']:.2f}%")
+                                        st.text(f"  Probabilidade: {dados['prob_robo']:.2f}%") 
+                                        
+                                        # --- ESTA É A LINHA CORRIGIDA ---
+                                        st.text(f"  Valor: +{dados['valor_encontrado']:.2f}%")
+                                        # ----------------------------------
                                         
                                         mensagem += f"\n<b>Mercado: {mercado_limpo}</b>\n"
                                         mensagem += f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)\n"
