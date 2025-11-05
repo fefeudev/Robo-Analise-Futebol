@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 4.5 - Design de Métricas)
-# UPGRADE: Resultados agora usam st.metric para um visual de dashboard
+# O Robô de Análise (Versão 4.6 - Modo Detalhado)
+# UPGRADE: Adicionado st.toggle para "Análise Completa"
 
 import streamlit as st
 import requests
@@ -37,6 +37,7 @@ def fazer_requisicao_api(endpoint, params):
 # --- ETAPA 1 (CÉREBRO HÍBRIDO) ---
 @st.cache_data
 def carregar_cerebro_dixon_coles(id_liga):
+    # (Função idêntica)
     nome_arquivo = f"dc_params_{id_liga}.json"
     try:
         with open(nome_arquivo, 'r', encoding='utf-8') as f:
@@ -235,7 +236,7 @@ def enviar_mensagem_telegram(mensagem):
     except Exception as e:
         st.error(f"Erro fatal no envio do Telegram: {e}")
 
-# --- A INTERFACE GRÁFICA (Função Principal) ---
+# --- A INTERFACE GRÁFICA (Função Principal ATUALIZADA) ---
 
 LIGAS_DISPONIVEIS = {
     "Brasileirão": "BSA",
@@ -251,9 +252,11 @@ LIGAS_DISPONIVEIS = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("Controles do Robô 🤖")
+    
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
     TEMPORADA_ATUAL = config.TEMPORADA_PARA_ANALISAR 
+    
     st.header("2. Cérebro do Robô")
     MODO_CEREBRO = "FALHA" 
     with st.spinner(f"Tentando carregar Cérebro Dixon-Coles para {LIGA_ATUAL}..."):
@@ -274,8 +277,10 @@ with st.sidebar:
         else:
             st.success(f"Cérebro Poisson treinado com {len(df_historico_poisson)} jogos.")
             MODO_CEREBRO = "POISSON_RECENTE"
+            
     st.header("3. Buscar Jogos")
     data_selecionada = st.date_input("Selecione a data para analisar:", datetime.now())
+    
     st.header("4. Filtros de Análise")
     filtro_prob_minima_percentual = st.slider(
         "Probabilidade Mínima (Chance de Green)", 
@@ -283,6 +288,15 @@ with st.sidebar:
     )
     filtro_prob_minima = filtro_prob_minima_percentual / 100.0 
     filtro_valor_minimo = 0.05
+    
+    # --- ESTA É A MUDANÇA (MELHORIA 3) ---
+    st.header("5. Modo de Análise")
+    modo_detalhado = st.toggle(
+        "Mostrar Análise Completa", 
+        value=False, # Começa desligado
+        help="Se LIGADO, mostra a probabilidade para todos os 8 mercados, mesmo que não tenham valor."
+    )
+    # -------------------------------------
     
 st.title("Robô de Análise de Valor (Híbrido) 🧠")
 st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')} na Liga: {LIGA_ATUAL}")
@@ -345,7 +359,6 @@ if MODO_CEREBRO != "FALHA":
                                 probs_robo = prever_jogo_dixon_coles(
                                     dados_cerebro_dc, jogo['time_casa'], jogo['time_visitante']
                                 )
-                            
                             elif MODO_CEREBRO == "POISSON_RECENTE":
                                 forcas_times = calcular_forcas_recente_poisson(
                                     df_historico_poisson, jogo['time_casa'], jogo['time_visitante'], jogo['data_jogo']
@@ -357,51 +370,93 @@ if MODO_CEREBRO != "FALHA":
                                     )
                             
                             if probs_robo:
+                                # --- LÓGICA DE EXIBIÇÃO ATUALIZADA (MELHORIA 3) ---
+                                
+                                # 1. Encontra as oportunidades (para o Telegram e para destacar)
                                 oportunidades = encontrar_valor(
                                     probs_robo, odds_manuais, 
                                     filtro_prob_minima, filtro_valor_minimo
                                 )
                                 
+                                # 2. Lógica de exibição
+                                if modo_detalhado:
+                                    # --- MODO DETALHADO (Mostra TUDO) ---
+                                    st.subheader("Análise Completa (Todos os Mercados)")
+                                    
+                                    col_met1, col_met2, col_met3 = st.columns(3)
+                                    colunas_metricas = [col_met1, col_met2, col_met3]
+                                    idx_coluna = 0
+                                    
+                                    for mercado, prob_robo_pct in probs_robo.items():
+                                        # (Ignora os mercados 'under'/'nao' para limpar a UI)
+                                        if mercado.endswith('_nao') or mercado == 'under_2_5':
+                                            continue
+                                            
+                                        odd_manual = odds_manuais.get(mercado)
+                                        mercado_limpo = nomes_mercado.get(mercado, mercado)
+                                        col_target = colunas_metricas[idx_coluna % 3] # Alterna entre as 3 colunas
+                                        
+                                        with col_target:
+                                            if (mercado in oportunidades):
+                                                # Se ESTE mercado é uma oportunidade de valor, mostra em VERDE
+                                                dados = oportunidades[mercado]
+                                                st.metric(
+                                                    label=f"✅ {mercado_limpo}",
+                                                    value=f"{dados['prob_robo']:.2f}%",
+                                                    delta=f"+{dados['valor_encontrado']:.2f}% Valor",
+                                                    delta_color="normal" # Verde
+                                                )
+                                                st.caption(f"Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.1f}%)")
+                                            else:
+                                                # Se NÃO é uma oportunidade, mostra em VERMELHO
+                                                prob_robo_real = prob_robo_pct * 100
+                                                prob_casa = (1 / odd_manual * 100) if odd_manual else 0
+                                                valor = prob_robo_real - prob_casa
+                                                
+                                                st.metric(
+                                                    label=f"❌ {mercado_limpo}",
+                                                    value=f"{prob_robo_real:.2f}%",
+                                                    delta=f"{valor:.2f}% Valor",
+                                                    delta_color="inverse" # Vermelho
+                                                )
+                                                st.caption(f"Odd: {odd_manual:.2f} (Casa: {prob_casa:.1f}%)" if odd_manual else "Sem Odd")
+                                        
+                                        idx_coluna += 1
+
+                                else:
+                                    # --- MODO PADRÃO (Mostra Apenas Dicas) ---
+                                    if oportunidades:
+                                        st.success("🔥 OPORTUNIDADES DE VALOR ENCONTRADAS!")
+                                        
+                                        for mercado, dados in oportunidades.items():
+                                            mercado_limpo = nomes_mercado.get(mercado, mercado)
+                                            st.subheader(f"Mercado: {mercado_limpo}")
+                                            
+                                            col_met1, col_met2, col_met3 = st.columns(3)
+                                            with col_met1:
+                                                st.metric(label="Odd (Casa %)", value=f"{dados['odd_casa']:.2f}",
+                                                          delta=f"{dados['prob_casa_aposta']:.1f}% da Casa", delta_color="off")
+                                            with col_met2:
+                                                st.metric(label="Probabilidade", value=f"{dados['prob_robo']:.2f}%")
+                                            with col_met3:
+                                                st.metric(label="Valor Encontrado", value=f"+{dados['valor_encontrado']:.2f}%")
+                                    else:
+                                        st.info(f"Nenhuma oportunidade de valor (com >{filtro_prob_minima_percentual}% de prob.) encontrada.")
+                                
+                                # --- Lógica do Telegram (só envia as dicas reais) ---
                                 if oportunidades:
-                                    st.success("🔥 OPORTUNIDADES DE VALOR ENCONTRADAS!")
                                     mensagem = f"🔥 <b>Oportunidade ({MODO_CEREBRO})</b> 🔥\n\n"
                                     mensagem += f"<b>Liga:</b> {liga_selecionada_nome}\n"
                                     mensagem += f"<b>Jogo:</b> {jogo['time_casa']} vs {jogo['time_visitante']}\n"
                                     
-                                    # --- ESTA É A SEÇÃO ATUALIZADA (MELHORIA 2) ---
                                     for mercado, dados in oportunidades.items():
                                         mercado_limpo = nomes_mercado.get(mercado, mercado)
-                                        st.subheader(f"Mercado: {mercado_limpo}")
-                                        
-                                        # Cria 3 colunas para as métricas
-                                        col_met1, col_met2, col_met3 = st.columns(3)
-                                        with col_met1:
-                                            st.metric(
-                                                label="Odd (Casa %)", 
-                                                value=f"{dados['odd_casa']:.2f}",
-                                                delta=f"{dados['prob_casa_aposta']:.1f}% da Casa",
-                                                delta_color="off" # Cor neutra
-                                            )
-                                        with col_met2:
-                                            st.metric(
-                                                label="Probabilidade (Robô)",
-                                                value=f"{dados['prob_robo']:.2f}%"
-                                            )
-                                        with col_met3:
-                                            st.metric(
-                                                label="Valor Encontrado",
-                                                value=f"+{dados['valor_encontrado']:.2f}%",
-                                                delta_color="normal" # Verde para positivo
-                                            )
-
-                                        # (A mensagem do Telegram não muda)
                                         mensagem += f"\n<b>Mercado: {mercado_limpo}</b>\n"
                                         mensagem += f"  Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)\n"
                                         mensagem += f"  <b>Probabilidade: {dados['prob_robo']:.2f}%</b>\n"
                                         mensagem += f"  <b>Valor: +{dados['valor_encontrado']:.2f}%</b>\n"
                                     
                                     enviar_mensagem_telegram(mensagem)
-                                else:
-                                    st.info(f"Nenhuma oportunidade de valor (com >{filtro_prob_minima_percentual}% de prob.) encontrada.")
+                                
                             else:
                                 st.error("Não foi possível calcular as probabilidades do robô (Times novos ou erro no Cérebro).")
