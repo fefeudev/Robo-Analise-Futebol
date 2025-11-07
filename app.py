@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 5.2 - Modo Aplicativo)
-# UPGRADE: Navegação por "Telas" (Drill-Down) e Setas de Data
+# O Robô de Análise (Versão 5.3 - Correção 'json is not defined')
+# UPGRADE: Corrigido o erro de importação do JSON
 
 import streamlit as st
 import requests
@@ -9,7 +9,8 @@ import numpy as np
 import scipy.stats as stats 
 import config 
 import time
-from datetime import datetime, timedelta # Importa 'timedelta' para as setas
+from datetime import datetime, timedelta
+import json # <--- ESTA É A LINHA CORRIGIDA
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
@@ -34,21 +35,27 @@ def fazer_requisicao_api(endpoint, params):
     return None
 
 # --- ETAPA 1 (CÉREBRO HÍBRIDO) ---
-# (Todas as funções do Cérebro (Dixon-Coles e Poisson) são idênticas)
 @st.cache_data
 def carregar_cerebro_dixon_coles(id_liga):
+    """
+    Tenta carregar os parâmetros pré-treinados do arquivo JSON.
+    Se não encontrar, retorna None.
+    """
     nome_arquivo = f"dc_params_{id_liga}.json"
     try:
         with open(nome_arquivo, 'r', encoding='utf-8') as f:
-            dados_cerebro = json.load(f)
+            dados_cerebro = json.load(f) # <-- Esta linha agora funciona
+            print(f"Cérebro Dixon-Coles ({id_liga}) carregado do arquivo.")
             return dados_cerebro
     except FileNotFoundError:
+        print(f"Arquivo 'dc_params_{id_liga}.json' não encontrado. Usando Cérebro Poisson.")
         return None 
     except Exception as e:
         st.error(f"Erro ao ler o arquivo de Cérebro: {e}")
         return None
 
 def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
+    # (Função idêntica)
     try:
         forcas = dados_cerebro['forcas']
         vantagem_casa = dados_cerebro['vantagem_casa']
@@ -95,6 +102,7 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
 
 @st.cache_data 
 def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
+    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"season": str(temporada), "status": "FINISHED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -125,6 +133,7 @@ def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
     return df_liga, medias_liga
 
 def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
+    # (Função idêntica)
     data_do_jogo_dt = pd.to_datetime(data_do_jogo)
     df_passado = df_historico[df_historico['data_jogo'] < data_do_jogo_dt]
     jogos_casa_recente = df_passado[df_passado['TimeCasa'] == time_casa].tail(num_jogos)
@@ -143,6 +152,7 @@ def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, dat
     return forcas_times
 
 def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
+    # (Função idêntica)
     forca_ataque_casa = forcas_times[time_casa]['ataque_casa_media'] / medias_liga['media_gols_casa']
     forca_defesa_casa = forcas_times[time_casa]['defesa_casa_media'] / medias_liga['media_gols_visitante']
     forca_ataque_visitante = forcas_times[time_visitante]['ataque_visitante_media'] / medias_liga['media_gols_visitante']
@@ -161,7 +171,7 @@ def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
         for j in range(config.MAX_GOLS_CALCULO + 1):
             prob_placar = matriz_placar[i, j]
             if (i + j) > 2.5: prob_over_2_5 += prob_placar
-            if (i > 0 and j > 0): prob_btts_sim += prob_placar
+            if i > 0 and j > 0: prob_btts_sim += prob_placar
     soma_total_probs = prob_vitoria_casa + prob_empate + prob_vitoria_visitante
     if soma_total_probs == 0: return None, None
     prob_dc_1x = prob_vitoria_casa + prob_empate
@@ -290,13 +300,8 @@ with st.sidebar:
             
     st.header("3. Buscar Jogos")
     
-    # --- MELHORIA DE DESIGN: CONTROLES DE DATA ---
-    
-    # Inicializa a data na memória (session_state) se ela não existir
     if 'data_selecionada' not in st.session_state:
         st.session_state.data_selecionada = datetime.now()
-
-    # Funções para os botões
     def dia_anterior():
         st.session_state.data_selecionada -= timedelta(days=1)
     def proximo_dia():
@@ -304,22 +309,18 @@ with st.sidebar:
     def hoje():
         st.session_state.data_selecionada = datetime.now()
 
-    # Cria as 3 colunas para os botões de data
     col_data1, col_data2 = st.columns([1,1])
     with col_data1:
         st.button("< Ontem", on_click=dia_anterior, use_container_width=True)
     with col_data2:
         st.button("Amanhã >", on_click=proximo_dia, use_container_width=True)
     
-    # O seletor de data, agora controlado pelo 'session_state'
     data_selecionada = st.date_input(
         "Ou selecione uma data:",
         value=st.session_state.data_selecionada,
-        key='data_selecionada' # Conecta o seletor à memória
+        key='data_selecionada' 
     )
-    
     st.button("Ir para Hoje", on_click=hoje, use_container_width=True)
-    # --- FIM DA MELHORIA DE DATA ---
             
     st.header("4. Filtros de Análise")
     filtro_prob_minima_percentual = st.slider(
@@ -338,13 +339,7 @@ with st.sidebar:
     
 # --- 2. PÁGINA PRINCIPAL ---
 
-# --- LÓGICA DE MÚLTIPLAS "TELAS" ---
-# 1. Se um jogo ainda NÃO foi selecionado, mostra a lista de jogos.
-# 2. Se um jogo FOI selecionado, esconde a lista e mostra SÓ o formulário.
-
 if 'jogo_selecionado' not in st.session_state:
-    
-    # --- TELA 1: LISTA DE JOGOS ---
     
     st.title("Robô de Análise de Valor 🤖")
     st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')} na Liga: {liga_selecionada_nome}")
@@ -359,13 +354,10 @@ if 'jogo_selecionado' not in st.session_state:
         else:
             st.info(f"Encontrados {len(jogos_do_dia)} jogos. Clique em um jogo para analisar:")
             
-            # Para cada jogo, cria um "Card" clicável
             for i, jogo in enumerate(jogos_do_dia):
-                
-                # 'on_click' é a mágica. Quando clicado, salva o jogo na memória
-                def selecionar_jogo(jogo_clicado=jogo):
+                def selecionar_jogo(jogo_clicado=jogo, indice=i):
                     st.session_state.jogo_selecionado = jogo_clicado
-                    st.session_state.jogo_indice = i # Salva o índice para chaves únicas
+                    st.session_state.jogo_indice = indice
 
                 st.button(
                     f"⚽ **{jogo['time_casa']} vs {jogo['time_visitante']}**", 
@@ -373,20 +365,15 @@ if 'jogo_selecionado' not in st.session_state:
                     use_container_width=True,
                     key=f"btn_jogo_{i}"
                 )
-
 else:
-    # --- TELA 2: ANÁLISE DE UM JOGO (Drill-Down) ---
-    
     jogo = st.session_state.jogo_selecionado
     i = st.session_state.jogo_indice
     
-    # Botão de Voltar
     if st.button("⬅️ Voltar para a lista de jogos"):
         del st.session_state.jogo_selecionado
         del st.session_state.jogo_indice
-        st.rerun() # Força o app a recarregar (voltando para a "Tela 1")
+        st.rerun() 
 
-    # O formulário do jogo (idêntico ao que tínhamos, mas fora do 'expander')
     with st.form(key=f"form_jogo_{i}"):
         st.header(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}")
         
