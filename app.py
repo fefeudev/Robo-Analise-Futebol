@@ -40,24 +40,32 @@ def fazer_requisicao_api(endpoint, params):
     return None
 
 # --- NOVAS FUNÇÕES (BANCO DE DADOS GOOGLE SHEETS) ---
+
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
+    """
+    Conecta-se ao Google Sheets usando os "Secrets" do Streamlit.
+    """
     try:
         creds_dict = dict(st.secrets.google_creds)
         scope = [
-            "https.www.googleapis.com/auth/spreadsheets",
-            "https.www.googleapis.com/auth/drive.file"
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive.file"
         ]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_url(st.secrets.GOOGLE_SHEET_URL).sheet1
         return sheet
     except Exception as e:
+        # Mostra o erro que vimos na image_36db77.png se os secrets estiverem errados
         st.error(f"Erro ao conectar ao Google Sheets: {e}") 
         st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL).")
         return None
 
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
+    """
+    Adiciona uma nova linha na planilha.
+    """
     try:
         nova_linha = [
             data, liga, jogo, mercado, 
@@ -71,16 +79,21 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
 
 @st.cache_data(ttl=60) 
 def carregar_historico_do_banco(_sheet):
+    """
+    Lê todos os dados da planilha e calcula a assertividade.
+    """
     try:
         dados = _sheet.get_all_records() 
         df = pd.DataFrame(dados)
         
+        # Se o DataFrame não estiver vazio, calcula os contadores
         if not df.empty:
             contagem_status = df['Status'].value_counts()
             greens = contagem_status.get('Green ✅', 0)
             reds = contagem_status.get('Red ❌', 0)
         else:
-            greens, reds = 0, 0
+            greens = 0
+            reds = 0
             
         return df, greens, reds
     except Exception as e:
@@ -88,10 +101,14 @@ def carregar_historico_do_banco(_sheet):
         return pd.DataFrame(), 0, 0
 
 def atualizar_status_no_banco(sheet, row_index, novo_status):
+    """
+    Atualiza a coluna 'Status' (H) de uma linha específica.
+    """
     try:
-        sheet.update_cell(row_index + 2, 8, novo_status) # Coluna H
-        st.cache_data.clear() 
-        st.rerun() 
+        # gspread usa índice 1 (Linha 1 é o cabeçalho, Linha 2 é o índice 0 dos dados)
+        sheet.update_cell(row_index + 2, 8, novo_status) # Coluna 8 é a Coluna H (Status)
+        st.cache_data.clear() # Limpa o cache para recarregar o histórico
+        st.rerun() # Recarrega a página
     except Exception as e:
         st.error(f"Erro ao atualizar status: {e}")
 
@@ -280,7 +297,7 @@ def enviar_mensagem_telegram(mensagem):
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
         st.warning("Token do Telegram não configurado. Pulando envio.")
         return
-    url = f"https.api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
+    url = f"https{config.TELEGRAM_TOKEN}/sendMessage" # <--- CORREÇÃO DO ERRO 'image_63e5b9.png'
     params = {'chat_id': config.TELEGRAM_CHAT_ID, 'text': mensagem, 'parse_mode': 'HTML'}
     try:
         response = requests.get(url, params=params, timeout=10)
@@ -567,7 +584,6 @@ with tab_analise:
                                 mensagem_telegram += f"   <code>Probabilidade: {dados['prob_robo']:.2f}%</code>\n"
                                 mensagem_telegram += f"   <code>Valor: +{dados['valor_encontrado']:.2f}%</code>\n"
                                 
-                                # --- SALVA NO BANCO DE DADOS ---
                                 if db_sheet is not None:
                                     salvar_analise_no_banco(
                                         sheet=db_sheet,
@@ -615,7 +631,6 @@ with tab_historico:
             st.subheader("Últimas Análises")
             
             if st.checkbox("Mostrar apenas análises 'Aguardando'"):
-                # Correção: Assegura que a coluna 'Status' existe antes de filtrar
                 if 'Status' in df_historico_db.columns:
                     df_para_mostrar = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳'].iloc[::-1]
                 else:
@@ -628,7 +643,6 @@ with tab_historico:
             # 4. Lógica para Marcar Green/Red
             st.subheader("Atualizar Status")
             
-            # Correção: Assegura que a coluna 'Status' existe antes de filtrar
             if 'Status' in df_historico_db.columns:
                 opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
             else:
