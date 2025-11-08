@@ -1,7 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 6.2 - Correção do Drill-Down)
-# UPGRADE: Re-implementado o 'st.session_state' para a navegação de "telas"
-# dentro da aba de Análise.
+# O Robô de Análise (Versão 6.3 - Correção do NameError)
+# UPGRADE: Corrigido o bug 'NameError: data_selecionada'
 
 import streamlit as st
 import requests
@@ -40,14 +39,14 @@ def fazer_requisicao_api(endpoint, params):
         st.error(f"Erro de API: {e}")
     return None
 
-# --- FUNÇÕES DO BANCO DE DADOS (Google Sheets) ---
+# --- NOVAS FUNÇÕES (BANCO DE DADOS GOOGLE SHEETS) ---
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
     try:
         creds_dict = dict(st.secrets.google_creds)
         scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive.file"
+            "https.www.googleapis.com/auth/spreadsheets",
+            "https.www.googleapis.com/auth/drive.file"
         ]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
@@ -281,7 +280,7 @@ def enviar_mensagem_telegram(mensagem):
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
         st.warning("Token do Telegram não configurado. Pulando envio.")
         return
-    url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
+    url = f"https.api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
     params = {'chat_id': config.TELEGRAM_CHAT_ID, 'text': mensagem, 'parse_mode': 'HTML'}
     try:
         response = requests.get(url, params=params, timeout=10)
@@ -323,6 +322,7 @@ nomes_mercado = {
 }
 
 # --- 1. BARRA LATERAL (SIDEBAR) ---
+# --- ESTA É A LÓGICA CORRIGIDA ---
 with st.sidebar:
     st.title("Controles do Robô 🤖")
     
@@ -330,27 +330,6 @@ with st.sidebar:
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
     TEMPORADA_ATUAL = config.TEMPORADA_PARA_ANALISAR 
     
-    st.header("2. Cérebro do Robô")
-    MODO_CEREBRO = "FALHA" 
-    with st.spinner(f"Tentando carregar Cérebro Dixon-Coles para {LIGA_ATUAL}..."):
-        dados_cerebro_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
-    if dados_cerebro_dc is not None:
-        st.success(f"Cérebro Avançado (Dixon-Coles) carregado!")
-        st.caption(f"Treinado em: {dados_cerebro_dc['data_treinamento'].split('T')[0]}")
-        MODO_CEREBRO = "DIXON_COLES"
-        df_historico_poisson = None
-        medias_liga_poisson = None
-    else:
-        st.warning(f"Cérebro Dixon-Coles não encontrado para {LIGA_ATUAL}.")
-        st.info("Usando Cérebro de 'Forma Recente' (Poisson) como fallback.")
-        with st.spinner(f"Treinando Cérebro Poisson para {LIGA_ATUAL}..."):
-            df_historico_poisson, medias_liga_poisson = carregar_e_treinar_cerebro_poisson(LIGA_ATUAL, TEMPORADA_ATUAL)
-        if df_historico_poisson is None:
-            st.error(f"Falha ao carregar dados da {LIGA_ATUAL}.")
-        else:
-            st.success(f"Cérebro Poisson treinado com {len(df_historico_poisson)} jogos.")
-            MODO_CEREBRO = "POISSON_RECENTE"
-            
     st.header("3. Buscar Jogos")
     
     if 'data_selecionada' not in st.session_state:
@@ -368,6 +347,7 @@ with st.sidebar:
     with col_data2:
         st.button("Amanhã >", on_click=proximo_dia, use_container_width=True)
     
+    # Esta é a variável que estava causando o NameError. Agora ela está definida.
     data_selecionada = st.date_input(
         "Ou selecione uma data:",
         value=st.session_state.data_selecionada,
@@ -389,7 +369,7 @@ with st.sidebar:
         value=False,
         help="Se LIGADO, mostra a probabilidade para todos os 8 mercados, mesmo que não tenham valor."
     )
-    
+
 # --- 2. PÁGINA PRINCIPAL (COM ABAS) ---
 st.title("Robô de Análise de Valor (Híbrido) 💾")
 
@@ -402,11 +382,34 @@ tab_analise, tab_historico = st.tabs(["📊 Analisar Jogos", "📈 Histórico de
 # --- ABA 1: ANALISAR JOGOS ---
 with tab_analise:
     
+    # --- TREINA O CÉREBRO (AGORA DENTRO DA ABA) ---
+    st.subheader(f"Liga Selecionada: {liga_selecionada_nome}")
+    MODO_CEREBRO = "FALHA" 
+    with st.spinner(f"Tentando carregar Cérebro Dixon-Coles para {LIGA_ATUAL}..."):
+        dados_cerebro_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
+    
+    if dados_cerebro_dc is not None:
+        st.success(f"Cérebro Avançado (Dixon-Coles) carregado!")
+        st.caption(f"Treinado em: {dados_cerebro_dc['data_treinamento'].split('T')[0]}")
+        MODO_CEREBRO = "DIXON_COLES"
+        df_historico_poisson = None
+        medias_liga_poisson = None
+    else:
+        st.warning(f"Cérebro Dixon-Coles não encontrado para {LIGA_ATUAL}.")
+        st.info("Usando Cérebro de 'Forma Recente' (Poisson) como fallback.")
+        with st.spinner(f"Treinando Cérebro Poisson para {LIGA_ATUAL}..."):
+            df_historico_poisson, medias_liga_poisson = carregar_e_treinar_cerebro_poisson(LIGA_ATUAL, TEMPORADA_ATUAL)
+        if df_historico_poisson is None:
+            st.error(f"Falha ao carregar dados da {LIGA_ATUAL}.")
+        else:
+            st.success(f"Cérebro Poisson treinado com {len(df_historico_poisson)} jogos.")
+            MODO_CEREBRO = "POISSON_RECENTE"
+    
+    st.divider() # Linha Horizontal
+
     # --- LÓGICA DE "TELAS" (Drill-Down) ---
-    # Se 'jogo_selecionado' NÃO ESTÁ na memória, mostra a "Tela 1" (Lista)
     if 'jogo_selecionado' not in st.session_state:
-        
-        st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')} na Liga: {liga_selecionada_nome}")
+        st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')}")
         st.caption(f"Usando Cérebro: {MODO_CEREBRO} | Filtro de Probabilidade: > {filtro_prob_minima_percentual}%")
 
         if MODO_CEREBRO != "FALHA":
@@ -417,7 +420,6 @@ with tab_analise:
                 st.info(f"Nenhum jogo agendado encontrado para a liga {LIGA_ATUAL} na data {data_str}.")
             else:
                 st.info(f"Encontrados {len(jogos_do_dia)} jogos. Clique em um jogo para analisar:")
-                
                 for i, jogo in enumerate(jogos_do_dia):
                     def selecionar_jogo(jogo_clicado=jogo, indice=i):
                         st.session_state.jogo_selecionado = jogo_clicado
@@ -435,11 +437,10 @@ with tab_analise:
         jogo = st.session_state.jogo_selecionado
         i = st.session_state.jogo_indice
         
-        # Botão de Voltar
         if st.button("⬅️ Voltar para a lista de jogos"):
             del st.session_state.jogo_selecionado
             del st.session_state.jogo_indice
-            st.rerun() # Força o app a recarregar (voltando para a "Tela 1")
+            st.rerun() 
 
         with st.form(key=f"form_jogo_{i}"):
             st.header(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}")
@@ -570,7 +571,7 @@ with tab_analise:
                                 if db_sheet is not None:
                                     salvar_analise_no_banco(
                                         sheet=db_sheet,
-                                        data=data_str,
+                                        data=data_selecionada.strftime('%Y-%m-%d'), # Usa a data selecionada
                                         liga=liga_selecionada_nome,
                                         jogo=f"{jogo['time_casa']} vs {jogo['time_visitante']}",
                                         mercado=mercado_limpo,
@@ -614,16 +615,25 @@ with tab_historico:
             st.subheader("Últimas Análises")
             
             if st.checkbox("Mostrar apenas análises 'Aguardando'"):
-                df_para_mostrar = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳'].iloc[::-1]
+                # Correção: Assegura que a coluna 'Status' existe antes de filtrar
+                if 'Status' in df_historico_db.columns:
+                    df_para_mostrar = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳'].iloc[::-1]
+                else:
+                    df_para_mostrar = df_historico_db.iloc[::-1]
             else:
-                df_para_mostrar = df_historico_db.iloc[::-1] # Inverte a ordem (mais novo primeiro)
+                df_para_mostrar = df_historico_db.iloc[::-1] 
             
             st.dataframe(df_para_mostrar, use_container_width=True)
             
             # 4. Lógica para Marcar Green/Red
             st.subheader("Atualizar Status")
             
-            opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
+            # Correção: Assegura que a coluna 'Status' existe antes de filtrar
+            if 'Status' in df_historico_db.columns:
+                opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
+            else:
+                opcoes_para_atualizar_df = pd.DataFrame(columns=df_historico_db.columns) # Cria um DF vazio
+
             
             opcoes_para_atualizar_lista = [
                 f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
