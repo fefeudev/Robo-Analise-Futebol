@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 6.0 - Banco de Dados de Assertividade)
-# UPGRADE: Conectado ao Google Sheets como um banco de dados permanente.
+# O Robô de Análise (Versão 6.1 - Correção do KeyError)
+# UPGRADE: Corrigido o bug 'KeyError: Status' que acontece quando a planilha está vazia.
 
 import streamlit as st
 import requests
@@ -47,24 +47,18 @@ def conectar_ao_banco_de_dados():
     Conecta-se ao Google Sheets usando os "Secrets" do Streamlit.
     """
     try:
-        # Pega as credenciais .json do "cofre" (Secrets)
         creds_dict = dict(st.secrets.google_creds)
-        
-        # Define o "escopo" (quais APIs vamos usar)
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive.file"
         ]
-        
-        # Autoriza usando as credenciais
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        
-        # Abre a planilha pela URL (que também está nos "Secrets")
         sheet = client.open_by_url(st.secrets.GOOGLE_SHEET_URL).sheet1
         return sheet
     except Exception as e:
-        st.error(f"Erro ao conectar ao Google Sheets: {e}")
+        # Mostra o erro que vimos na image_36db77.png se os secrets estiverem errados
+        st.error(f"Erro ao conectar ao Google Sheets: {e}") 
         st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL).")
         return None
 
@@ -73,7 +67,6 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
     Adiciona uma nova linha na planilha.
     """
     try:
-        # Formata os dados para a planilha
         nova_linha = [
             data, 
             liga, 
@@ -95,15 +88,18 @@ def carregar_historico_do_banco(_sheet):
     Lê todos os dados da planilha e calcula a assertividade.
     """
     try:
-        # Pega todos os dados, exceto a primeira linha (cabeçalho)
         dados = _sheet.get_all_records() 
         df = pd.DataFrame(dados)
         
-        # Calcula os contadores
-        contagem_status = df['Status'].value_counts()
-        greens = contagem_status.get('Green ✅', 0)
-        reds = contagem_status.get('Red ❌', 0)
-        
+        # Se o DataFrame não estiver vazio, calcula os contadores
+        if not df.empty:
+            contagem_status = df['Status'].value_counts()
+            greens = contagem_status.get('Green ✅', 0)
+            reds = contagem_status.get('Red ❌', 0)
+        else:
+            greens = 0
+            reds = 0
+            
         return df, greens, reds
     except Exception as e:
         st.error(f"Erro ao carregar o histórico: {e}")
@@ -115,7 +111,6 @@ def atualizar_status_no_banco(sheet, row_index, novo_status):
     """
     try:
         # gspread usa índice 1 (Linha 1 é o cabeçalho, Linha 2 é o índice 0 dos dados)
-        # Por isso, (row_index + 2)
         sheet.update_cell(row_index + 2, 8, novo_status) # Coluna 8 é a Coluna H (Status)
         st.cache_data.clear() # Limpa o cache para recarregar o histórico
         st.rerun() # Recarrega a página
@@ -437,10 +432,6 @@ with tab_analise:
         if not jogos_do_dia:
             st.info(f"Nenhum jogo agendado encontrado para a liga {LIGA_ATUAL} na data {data_str}.")
         else:
-            # (A lógica 'for' loop e 'st.expander' foi removida)
-            # (A lógica de 'st.session_state' para navegação foi removida)
-            # Nós voltamos para o 'expander' simples dentro da aba
-            
             for i, jogo in enumerate(jogos_do_dia):
                 with st.expander(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}"):
                     with st.form(key=f"form_jogo_{i}"):
@@ -501,13 +492,11 @@ with tab_analise:
                                         filtro_prob_minima, filtro_valor_minimo
                                     )
                                     
-                                    # (Lógica de exibição e mensagem)
                                     mensagem_telegram = ""
                                     if oportunidades:
                                         xg_casa_str = f"{xg_tupla[0]:.2f}" if xg_tupla else "N/A"
                                         xg_vis_str = f"{xg_tupla[1]:.2f}" if xg_tupla else "N/A"
                                         emoji_liga = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
-                                        
                                         mensagem_telegram = f"🔥 <b>Oportunidade ({MODO_CEREBRO})</b> 🔥\n\n"
                                         mensagem_telegram += f"<b>Liga:</b> {emoji_liga} {liga_selecionada_nome}\n"
                                         mensagem_telegram += f"<b>Jogo:</b> ⚽️ {jogo['time_casa']} vs {jogo['time_visitante']}\n\n"
@@ -609,47 +598,51 @@ with tab_historico:
         
         st.divider() # Linha horizontal
         
-        # 3. Mostra a tabela de dados
-        st.subheader("Últimas Análises")
-        
-        # Filtro para ver apenas análises "Aguardando"
-        if st.checkbox("Mostrar apenas análises 'Aguardando'"):
-            df_para_mostrar = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳'].iloc[::-1]
+        # --- INÍCIO DA CORREÇÃO (para o erro 'image_36e9c3.png') ---
+        # SÓ TENTAMOS MOSTRAR O HISTÓRICO SE O BANCO DE DADOS (DF) NÃO ESTIVER VAZIO
+        if df_historico_db.empty:
+            st.info("Nenhuma análise foi salva no banco de dados ainda. Faça sua primeira análise!")
         else:
-            df_para_mostrar = df_historico_db.iloc[::-1] # Inverte a ordem (mais novo primeiro)
-        
-        st.dataframe(df_para_mostrar, use_container_width=True)
-        
-        # 4. Lógica para Marcar Green/Red
-        st.subheader("Atualizar Status")
-        
-        # Pega apenas as análises que estão "Aguardando"
-        opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
-        
-        # Cria uma lista de nomes amigáveis para o seletor
-        # Ex: "0: [BSA] Jogo X - Mercado: Casa"
-        opcoes_para_atualizar_lista = [
-            f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
-            for idx, row in opcoes_para_atualizar_df.iterrows()
-        ]
-        
-        if not opcoes_para_atualizar_lista:
-            st.info("Nenhuma análise 'Aguardando' para atualizar.")
-        else:
-            analise_selecionada = st.selectbox(
-                "Selecione a análise para atualizar:",
-                opcoes_para_atualizar_lista
-            )
+            # 3. Mostra a tabela de dados
+            st.subheader("Últimas Análises")
             
-            col_b1, col_b2 = st.columns(2)
+            if st.checkbox("Mostrar apenas análises 'Aguardando'"):
+                df_para_mostrar = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳'].iloc[::-1]
+            else:
+                df_para_mostrar = df_historico_db.iloc[::-1] # Inverte a ordem (mais novo primeiro)
             
-            # Botão Green
-            if col_b1.button("Marcar como Green ✅", use_container_width=True):
-                # Pega o índice real do DataFrame (ex: "0" da string "0: [BSA]...")
-                indice_real_df = int(analise_selecionada.split(':')[0])
-                atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
+            # Mostra o DataFrame (tabela)
+            st.dataframe(df_para_mostrar, use_container_width=True)
+            
+            # 4. Lógica para Marcar Green/Red
+            st.subheader("Atualizar Status")
+            
+            opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
+            
+            opcoes_para_atualizar_lista = [
+                # Usa o índice real do DataFrame (idx) para a seleção
+                f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
+                for idx, row in opcoes_para_atualizar_df.iterrows()
+            ]
+            
+            if not opcoes_para_atualizar_lista:
+                st.info("Nenhuma análise 'Aguardando' para atualizar.")
+            else:
+                analise_selecionada = st.selectbox(
+                    "Selecione a análise para atualizar:",
+                    opcoes_para_atualizar_lista
+                )
                 
-            # Botão Red
-            if col_b2.button("Marcar como Red ❌", use_container_width=True):
-                indice_real_df = int(analise_selecionada.split(':')[0])
-                atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+                col_b1, col_b2 = st.columns(2)
+                
+                # Botão Green
+                if col_b1.button("Marcar como Green ✅", use_container_width=True):
+                    # Pega o índice real do DataFrame (ex: "0" da string "0: [BSA]...")
+                    indice_real_df = int(analise_selecionada.split(':')[0])
+                    atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
+                    
+                # Botão Red
+                if col_b2.button("Marcar como Red ❌", use_container_width=True):
+                    indice_real_df = int(analise_selecionada.split(':')[0])
+                    atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+        # --- FIM DA CORREÇÃO ---
