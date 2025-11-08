@@ -1,6 +1,7 @@
 # app.py
-# O Robô de Análise (Versão 6.1 - Correção do KeyError)
-# UPGRADE: Corrigido o bug 'KeyError: Status' que acontece quando a planilha está vazia.
+# O Robô de Análise (Versão 6.2 - Correção do Drill-Down)
+# UPGRADE: Re-implementado o 'st.session_state' para a navegação de "telas"
+# dentro da aba de Análise.
 
 import streamlit as st
 import requests
@@ -39,13 +40,9 @@ def fazer_requisicao_api(endpoint, params):
         st.error(f"Erro de API: {e}")
     return None
 
-# --- NOVAS FUNÇÕES (BANCO DE DADOS GOOGLE SHEETS) ---
-
-@st.cache_resource # Cacheia a conexão
+# --- FUNÇÕES DO BANCO DE DADOS (Google Sheets) ---
+@st.cache_resource 
 def conectar_ao_banco_de_dados():
-    """
-    Conecta-se ao Google Sheets usando os "Secrets" do Streamlit.
-    """
     try:
         creds_dict = dict(st.secrets.google_creds)
         scope = [
@@ -57,48 +54,34 @@ def conectar_ao_banco_de_dados():
         sheet = client.open_by_url(st.secrets.GOOGLE_SHEET_URL).sheet1
         return sheet
     except Exception as e:
-        # Mostra o erro que vimos na image_36db77.png se os secrets estiverem errados
         st.error(f"Erro ao conectar ao Google Sheets: {e}") 
         st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL).")
         return None
 
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
-    """
-    Adiciona uma nova linha na planilha.
-    """
     try:
         nova_linha = [
-            data, 
-            liga, 
-            jogo, 
-            mercado, 
-            f"{odd:.2f}", 
-            f"{prob_robo:.2f}%", 
-            f"+{valor:.2f}%",
-            "Aguardando ⏳" # Status inicial
+            data, liga, jogo, mercado, 
+            f"{odd:.2f}", f"{prob_robo:.2f}%", f"+{valor:.2f}%",
+            "Aguardando ⏳" 
         ]
         sheet.append_row(nova_linha, value_input_option='USER_ENTERED')
         print(f"Análise salva no banco de dados: {jogo} - {mercado}")
     except Exception as e:
         st.error(f"Erro ao salvar no Google Sheets: {e}")
 
-@st.cache_data(ttl=60) # Cache de 60s para o histórico
+@st.cache_data(ttl=60) 
 def carregar_historico_do_banco(_sheet):
-    """
-    Lê todos os dados da planilha e calcula a assertividade.
-    """
     try:
         dados = _sheet.get_all_records() 
         df = pd.DataFrame(dados)
         
-        # Se o DataFrame não estiver vazio, calcula os contadores
         if not df.empty:
             contagem_status = df['Status'].value_counts()
             greens = contagem_status.get('Green ✅', 0)
             reds = contagem_status.get('Red ❌', 0)
         else:
-            greens = 0
-            reds = 0
+            greens, reds = 0, 0
             
         return df, greens, reds
     except Exception as e:
@@ -106,14 +89,10 @@ def carregar_historico_do_banco(_sheet):
         return pd.DataFrame(), 0, 0
 
 def atualizar_status_no_banco(sheet, row_index, novo_status):
-    """
-    Atualiza a coluna 'Status' (H) de uma linha específica.
-    """
     try:
-        # gspread usa índice 1 (Linha 1 é o cabeçalho, Linha 2 é o índice 0 dos dados)
-        sheet.update_cell(row_index + 2, 8, novo_status) # Coluna 8 é a Coluna H (Status)
-        st.cache_data.clear() # Limpa o cache para recarregar o histórico
-        st.rerun() # Recarrega a página
+        sheet.update_cell(row_index + 2, 8, novo_status) # Coluna H
+        st.cache_data.clear() 
+        st.rerun() 
     except Exception as e:
         st.error(f"Erro ao atualizar status: {e}")
 
@@ -422,158 +401,187 @@ tab_analise, tab_historico = st.tabs(["📊 Analisar Jogos", "📈 Histórico de
 
 # --- ABA 1: ANALISAR JOGOS ---
 with tab_analise:
-    st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')} na Liga: {liga_selecionada_nome}")
-    st.caption(f"Usando Cérebro: {MODO_CEREBRO} | Filtro de Probabilidade: > {filtro_prob_minima_percentual}%")
+    
+    # --- LÓGICA DE "TELAS" (Drill-Down) ---
+    # Se 'jogo_selecionado' NÃO ESTÁ na memória, mostra a "Tela 1" (Lista)
+    if 'jogo_selecionado' not in st.session_state:
+        
+        st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')} na Liga: {liga_selecionada_nome}")
+        st.caption(f"Usando Cérebro: {MODO_CEREBRO} | Filtro de Probabilidade: > {filtro_prob_minima_percentual}%")
 
-    if MODO_CEREBRO != "FALHA":
-        data_str = data_selecionada.strftime('%Y-%m-%d')
-        jogos_do_dia = buscar_jogos_por_data(LIGA_ATUAL, data_str)
+        if MODO_CEREBRO != "FALHA":
+            data_str = data_selecionada.strftime('%Y-%m-%d')
+            jogos_do_dia = buscar_jogos_por_data(LIGA_ATUAL, data_str)
 
-        if not jogos_do_dia:
-            st.info(f"Nenhum jogo agendado encontrado para a liga {LIGA_ATUAL} na data {data_str}.")
-        else:
-            for i, jogo in enumerate(jogos_do_dia):
-                with st.expander(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}"):
-                    with st.form(key=f"form_jogo_{i}"):
-                        tab_1x2, tab_dc, tab_gols = st.tabs(["📊 Resultado (1x2)", "🤝 Chance Dupla", "⚽ Gols"])
-                        # (Formulário com abas)
-                        with tab_1x2:
-                            st.write("**Mercado 1X2**")
-                            col1, col2, col3 = st.columns(3)
-                            with col1: odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
-                            with col2: odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
-                            with col3: odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
-                        with tab_dc:
-                            st.write("**Chance Dupla**")
-                            col_dc1, col_dc2, col_dc3 = st.columns(3)
-                            with col_dc1: odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
-                            with col_dc2: odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
-                            with col_dc3: odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
-                        with tab_gols:
-                            st.write("**Gols**")
-                            col4, col5 = st.columns(2)
-                            with col4: odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
-                            with col5: odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
+            if not jogos_do_dia:
+                st.info(f"Nenhum jogo agendado encontrado para a liga {LIGA_ATUAL} na data {data_str}.")
+            else:
+                st.info(f"Encontrados {len(jogos_do_dia)} jogos. Clique em um jogo para analisar:")
+                
+                for i, jogo in enumerate(jogos_do_dia):
+                    def selecionar_jogo(jogo_clicado=jogo, indice=i):
+                        st.session_state.jogo_selecionado = jogo_clicado
+                        st.session_state.jogo_indice = indice
+
+                    st.button(
+                        f"⚽ **{jogo['time_casa']} vs {jogo['time_visitante']}**", 
+                        on_click=selecionar_jogo,
+                        use_container_width=True,
+                        key=f"btn_jogo_{i}"
+                    )
+    
+    # Se 'jogo_selecionado' ESTÁ na memória, mostra a "Tela 2" (Análise)
+    else:
+        jogo = st.session_state.jogo_selecionado
+        i = st.session_state.jogo_indice
+        
+        # Botão de Voltar
+        if st.button("⬅️ Voltar para a lista de jogos"):
+            del st.session_state.jogo_selecionado
+            del st.session_state.jogo_indice
+            st.rerun() # Força o app a recarregar (voltando para a "Tela 1")
+
+        with st.form(key=f"form_jogo_{i}"):
+            st.header(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}")
+            
+            tab_1x2, tab_dc, tab_gols = st.tabs(["📊 Resultado (1x2)", "🤝 Chance Dupla", "⚽ Gols"])
+            with tab_1x2:
+                st.write("**Mercado 1X2**")
+                col1, col2, col3 = st.columns(3)
+                with col1: odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
+                with col2: odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
+                with col3: odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
+            with tab_dc:
+                st.write("**Chance Dupla**")
+                col_dc1, col_dc2, col_dc3 = st.columns(3)
+                with col_dc1: odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
+                with col_dc2: odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
+                with col_dc3: odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
+            with tab_gols:
+                st.write("**Gols**")
+                col4, col5 = st.columns(2)
+                with col4: odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
+                with col5: odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
+            
+            submitted = st.form_submit_button("Analisar este Jogo")
+
+            if submitted:
+                with st.spinner("Analisando..."):
+                    odds_manuais = {
+                        'vitoria_casa': odd_casa, 'empate': odd_empate,
+                        'vitoria_visitante': odd_visitante, 'over_2_5': odd_over, 'btts_sim': odd_btts,
+                        'chance_dupla_1X': odd_1x, 'chance_dupla_X2': odd_x2, 'chance_dupla_12': odd_12
+                    }
+                    
+                    probs_robo = None
+                    xg_tupla = None 
+                    
+                    if MODO_CEREBRO == "DIXON_COLES":
+                        resultado_previsao = prever_jogo_dixon_coles(
+                            dados_cerebro_dc, jogo['time_casa'], jogo['time_visitante']
+                        )
+                        if resultado_previsao:
+                            probs_robo, xg_tupla = resultado_previsao
+                    elif MODO_CEREBRO == "POISSON_RECENTE":
+                        forcas_times = calcular_forcas_recente_poisson(
+                            df_historico_poisson, jogo['time_casa'], jogo['time_visitante'], jogo['data_jogo']
+                        )
+                        if forcas_times:
+                            resultado_previsao = prever_jogo_poisson(
+                                forcas_times, medias_liga_poisson,
+                                jogo['time_casa'], jogo['time_visitante'] 
+                            )
+                            if resultado_previsao:
+                                probs_robo, xg_tupla = resultado_previsao
+                    
+                    if probs_robo:
+                        oportunidades = encontrar_valor(
+                            probs_robo, odds_manuais, 
+                            filtro_prob_minima, filtro_valor_minimo
+                        )
                         
-                        submitted = st.form_submit_button("Analisar este Jogo")
-
-                        if submitted:
-                            with st.spinner("Analisando..."):
-                                odds_manuais = {
-                                    'vitoria_casa': odd_casa, 'empate': odd_empate,
-                                    'vitoria_visitante': odd_visitante, 'over_2_5': odd_over, 'btts_sim': odd_btts,
-                                    'chance_dupla_1X': odd_1x, 'chance_dupla_X2': odd_x2, 'chance_dupla_12': odd_12
-                                }
-                                
-                                probs_robo = None
-                                xg_tupla = None 
-                                
-                                if MODO_CEREBRO == "DIXON_COLES":
-                                    resultado_previsao = prever_jogo_dixon_coles(
-                                        dados_cerebro_dc, jogo['time_casa'], jogo['time_visitante']
-                                    )
-                                    if resultado_previsao:
-                                        probs_robo, xg_tupla = resultado_previsao
-                                elif MODO_CEREBRO == "POISSON_RECENTE":
-                                    forcas_times = calcular_forcas_recente_poisson(
-                                        df_historico_poisson, jogo['time_casa'], jogo['time_visitante'], jogo['data_jogo']
-                                    )
-                                    if forcas_times:
-                                        resultado_previsao = prever_jogo_poisson(
-                                            forcas_times, medias_liga_poisson,
-                                            jogo['time_casa'], jogo['time_visitante'] 
-                                        )
-                                        if resultado_previsao:
-                                            probs_robo, xg_tupla = resultado_previsao
-                                
-                                if probs_robo:
-                                    oportunidades = encontrar_valor(
-                                        probs_robo, odds_manuais, 
-                                        filtro_prob_minima, filtro_valor_minimo
-                                    )
-                                    
-                                    mensagem_telegram = ""
-                                    if oportunidades:
-                                        xg_casa_str = f"{xg_tupla[0]:.2f}" if xg_tupla else "N/A"
-                                        xg_vis_str = f"{xg_tupla[1]:.2f}" if xg_tupla else "N/A"
-                                        emoji_liga = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
-                                        mensagem_telegram = f"🔥 <b>Oportunidade ({MODO_CEREBRO})</b> 🔥\n\n"
-                                        mensagem_telegram += f"<b>Liga:</b> {emoji_liga} {liga_selecionada_nome}\n"
-                                        mensagem_telegram += f"<b>Jogo:</b> ⚽️ {jogo['time_casa']} vs {jogo['time_visitante']}\n\n"
-                                        mensagem_telegram += f"🧠 <b>Previsão do Cérebro (xG):</b>\n"
-                                        mensagem_telegram += f"   <code>xG Casa: {xg_casa_str}</code>\n"
-                                        mensagem_telegram += f"   <code>xG Visitante: {xg_vis_str}</code>\n"
-                                    
-                                    if modo_detalhado:
-                                        st.subheader("Análise Completa (Todos os Mercados)")
-                                        col_met1, col_met2, col_met3 = st.columns(3)
-                                        colunas_metricas = [col_met1, col_met2, col_met3]
-                                        idx_coluna = 0
-                                        for mercado, prob_robo_pct in probs_robo.items():
-                                            if mercado.endswith('_nao') or mercado == 'under_2_5':
-                                                continue
-                                            odd_manual = odds_manuais.get(mercado)
-                                            mercado_limpo = nomes_mercado.get(mercado, mercado)
-                                            col_target = colunas_metricas[idx_coluna % 3] 
-                                            with col_target:
-                                                if (mercado in oportunidades):
-                                                    dados = oportunidades[mercado]
-                                                    st.metric(label=f"✅ {mercado_limpo}", value=f"{dados['prob_robo']:.2f}%",
-                                                              delta=f"+{dados['valor_encontrado']:.2f}% Valor", delta_color="normal")
-                                                    st.caption(f"Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.1f}%)")
-                                                elif odd_manual:
-                                                    prob_robo_real = prob_robo_pct * 100
-                                                    prob_casa = (1 / odd_manual * 100)
-                                                    valor = prob_robo_real - prob_casa
-                                                    st.metric(label=f"❌ {mercado_limpo}", value=f"{prob_robo_real:.2f}%",
-                                                              delta=f"{valor:.2f}% Valor", delta_color="inverse")
-                                                    st.caption(f"Odd: {odd_manual:.2f} (Casa: {prob_casa:.1f}%)")
-                                                else:
-                                                    st.metric(label=f"⚪️ {mercado_limpo}", value=f"{(prob_robo_pct * 100):.2f}%",
-                                                              delta="Sem Odd Manual", delta_color="off")
-                                            idx_coluna += 1
+                        mensagem_telegram = ""
+                        if oportunidades:
+                            xg_casa_str = f"{xg_tupla[0]:.2f}" if xg_tupla else "N/A"
+                            xg_vis_str = f"{xg_tupla[1]:.2f}" if xg_tupla else "N/A"
+                            emoji_liga = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
+                            mensagem_telegram = f"🔥 <b>Oportunidade ({MODO_CEREBRO})</b> 🔥\n\n"
+                            mensagem_telegram += f"<b>Liga:</b> {emoji_liga} {liga_selecionada_nome}\n"
+                            mensagem_telegram += f"<b>Jogo:</b> ⚽️ {jogo['time_casa']} vs {jogo['time_visitante']}\n\n"
+                            mensagem_telegram += f"🧠 <b>Previsão do Cérebro (xG):</b>\n"
+                            mensagem_telegram += f"   <code>xG Casa: {xg_casa_str}</code>\n"
+                            mensagem_telegram += f"   <code>xG Visitante: {xg_vis_str}</code>\n"
+                        
+                        if modo_detalhado:
+                            st.subheader("Análise Completa (Todos os Mercados)")
+                            col_met1, col_met2, col_met3 = st.columns(3)
+                            colunas_metricas = [col_met1, col_met2, col_met3]
+                            idx_coluna = 0
+                            for mercado, prob_robo_pct in probs_robo.items():
+                                if mercado.endswith('_nao') or mercado == 'under_2_5':
+                                    continue
+                                odd_manual = odds_manuais.get(mercado)
+                                mercado_limpo = nomes_mercado.get(mercado, mercado)
+                                col_target = colunas_metricas[idx_coluna % 3] 
+                                with col_target:
+                                    if (mercado in oportunidades):
+                                        dados = oportunidades[mercado]
+                                        st.metric(label=f"✅ {mercado_limpo}", value=f"{dados['prob_robo']:.2f}%",
+                                                  delta=f"+{dados['valor_encontrado']:.2f}% Valor", delta_color="normal")
+                                        st.caption(f"Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.1f}%)")
+                                    elif odd_manual:
+                                        prob_robo_real = prob_robo_pct * 100
+                                        prob_casa = (1 / odd_manual * 100)
+                                        valor = prob_robo_real - prob_casa
+                                        st.metric(label=f"❌ {mercado_limpo}", value=f"{prob_robo_real:.2f}%",
+                                                  delta=f"{valor:.2f}% Valor", delta_color="inverse")
+                                        st.caption(f"Odd: {odd_manual:.2f} (Casa: {prob_casa:.1f}%)")
                                     else:
-                                        if oportunidades:
-                                            st.success("🔥 OPORTUNIDADES DE VALOR ENCONTRADAS!")
-                                            for mercado, dados in oportunidades.items():
-                                                mercado_limpo = nomes_mercado.get(mercado, mercado)
-                                                st.subheader(f"Mercado: {mercado_limpo}")
-                                                col_met1, col_met2, col_met3 = st.columns(3)
-                                                with col_met1:
-                                                    st.metric(label="Odd (Casa %)", value=f"{dados['odd_casa']:.2f}",
-                                                              delta=f"{dados['prob_casa_aposta']:.1f}% da Casa", delta_color="off")
-                                                with col_met2:
-                                                    st.metric(label="Probabilidade", value=f"{dados['prob_robo']:.2f}%")
-                                                with col_met3:
-                                                    st.metric(label="Valor Encontrado", value=f"+{dados['valor_encontrado']:.2f}%")
-                                        else:
-                                            st.info(f"Nenhuma oportunidade de valor (com >{filtro_prob_minima_percentual}% de prob.) encontrada.")
-                                    
-                                    if oportunidades:
-                                        for mercado, dados in oportunidades.items():
-                                            mercado_limpo = nomes_mercado.get(mercado, mercado)
-                                            mensagem_telegram += "------------------------------\n"
-                                            mensagem_telegram += f"✅ <b>Mercado: {mercado_limpo}</b>\n"
-                                            mensagem_telegram += f"   <code>Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)</code>\n"
-                                            mensagem_telegram += f"   <code>Probabilidade: {dados['prob_robo']:.2f}%</code>\n"
-                                            mensagem_telegram += f"   <code>Valor: +{dados['valor_encontrado']:.2f}%</code>\n"
-                                            
-                                            # --- SALVA NO BANCO DE DADOS ---
-                                            if db_sheet is not None:
-                                                salvar_analise_no_banco(
-                                                    sheet=db_sheet,
-                                                    data=data_str,
-                                                    liga=liga_selecionada_nome,
-                                                    jogo=f"{jogo['time_casa']} vs {jogo['time_visitante']}",
-                                                    mercado=mercado_limpo,
-                                                    odd=dados['odd_casa'],
-                                                    prob_robo=dados['prob_robo'],
-                                                    valor=dados['valor_encontrado']
-                                                )
-                                        
-                                        enviar_mensagem_telegram(mensagem_telegram)
-                                else:
-                                    st.error("Não foi possível calcular as probabilidades do robô (Times novos ou erro no Cérebro).")
+                                        st.metric(label=f"⚪️ {mercado_limpo}", value=f"{(prob_robo_pct * 100):.2f}%",
+                                                  delta="Sem Odd Manual", delta_color="off")
+                                idx_coluna += 1
+                        else:
+                            if oportunidades:
+                                st.success("🔥 OPORTUNIDADES DE VALOR ENCONTRADAS!")
+                                for mercado, dados in oportunidades.items():
+                                    mercado_limpo = nomes_mercado.get(mercado, mercado)
+                                    st.subheader(f"Mercado: {mercado_limpo}")
+                                    col_met1, col_met2, col_met3 = st.columns(3)
+                                    with col_met1:
+                                        st.metric(label="Odd (Casa %)", value=f"{dados['odd_casa']:.2f}",
+                                                  delta=f"{dados['prob_casa_aposta']:.1f}% da Casa", delta_color="off")
+                                    with col_met2:
+                                        st.metric(label="Probabilidade", value=f"{dados['prob_robo']:.2f}%")
+                                    with col_met3:
+                                        st.metric(label="Valor Encontrado", value=f"+{dados['valor_encontrado']:.2f}%")
+                            else:
+                                st.info(f"Nenhuma oportunidade de valor (com >{filtro_prob_minima_percentual}% de prob.) encontrada.")
+                        
+                        if oportunidades:
+                            for mercado, dados in oportunidades.items():
+                                mercado_limpo = nomes_mercado.get(mercado, mercado)
+                                mensagem_telegram += "------------------------------\n"
+                                mensagem_telegram += f"✅ <b>Mercado: {mercado_limpo}</b>\n"
+                                mensagem_telegram += f"   <code>Odd: {dados['odd_casa']:.2f} (Casa: {dados['prob_casa_aposta']:.2f}%)</code>\n"
+                                mensagem_telegram += f"   <code>Probabilidade: {dados['prob_robo']:.2f}%</code>\n"
+                                mensagem_telegram += f"   <code>Valor: +{dados['valor_encontrado']:.2f}%</code>\n"
+                                
+                                # --- SALVA NO BANCO DE DADOS ---
+                                if db_sheet is not None:
+                                    salvar_analise_no_banco(
+                                        sheet=db_sheet,
+                                        data=data_str,
+                                        liga=liga_selecionada_nome,
+                                        jogo=f"{jogo['time_casa']} vs {jogo['time_visitante']}",
+                                        mercado=mercado_limpo,
+                                        odd=dados['odd_casa'],
+                                        prob_robo=dados['prob_robo'],
+                                        valor=dados['valor_encontrado']
+                                    )
+                            
+                            enviar_mensagem_telegram(mensagem_telegram)
+                    else:
+                        st.error("Não foi possível calcular as probabilidades do robô (Times novos ou erro no Cérebro).")
 
 # --- ABA 2: HISTÓRICO DE ASSERTIVIDADE ---
 with tab_historico:
@@ -598,8 +606,7 @@ with tab_historico:
         
         st.divider() # Linha horizontal
         
-        # --- INÍCIO DA CORREÇÃO (para o erro 'image_36e9c3.png') ---
-        # SÓ TENTAMOS MOSTRAR O HISTÓRICO SE O BANCO DE DADOS (DF) NÃO ESTIVER VAZIO
+        # (Correção para planilha vazia)
         if df_historico_db.empty:
             st.info("Nenhuma análise foi salva no banco de dados ainda. Faça sua primeira análise!")
         else:
@@ -611,7 +618,6 @@ with tab_historico:
             else:
                 df_para_mostrar = df_historico_db.iloc[::-1] # Inverte a ordem (mais novo primeiro)
             
-            # Mostra o DataFrame (tabela)
             st.dataframe(df_para_mostrar, use_container_width=True)
             
             # 4. Lógica para Marcar Green/Red
@@ -620,7 +626,6 @@ with tab_historico:
             opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
             
             opcoes_para_atualizar_lista = [
-                # Usa o índice real do DataFrame (idx) para a seleção
                 f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
                 for idx, row in opcoes_para_atualizar_df.iterrows()
             ]
@@ -635,14 +640,10 @@ with tab_historico:
                 
                 col_b1, col_b2 = st.columns(2)
                 
-                # Botão Green
                 if col_b1.button("Marcar como Green ✅", use_container_width=True):
-                    # Pega o índice real do DataFrame (ex: "0" da string "0: [BSA]...")
                     indice_real_df = int(analise_selecionada.split(':')[0])
                     atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
                     
-                # Botão Red
                 if col_b2.button("Marcar como Red ❌", use_container_width=True):
                     indice_real_df = int(analise_selecionada.split(':')[0])
                     atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
-        # --- FIM DA CORREÇÃO ---
