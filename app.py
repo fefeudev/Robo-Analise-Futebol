@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 6.3 - Correção do NameError)
-# UPGRADE: Corrigido o bug 'NameError: data_selecionada'
+# O Robô de Análise (Versão 6.4 - Correção da URL do Telegram)
+# UPGRADE: Corrigido o bug 'No host supplied'
 
 import streamlit as st
 import requests
@@ -11,11 +11,8 @@ import config
 import time
 from datetime import datetime, timedelta
 import json
-
-# --- NOVOS IMPORTS DO BANCO DE DADOS ---
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-# -------------------------------------
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
@@ -39,33 +36,25 @@ def fazer_requisicao_api(endpoint, params):
         st.error(f"Erro de API: {e}")
     return None
 
-# --- NOVAS FUNÇÕES (BANCO DE DADOS GOOGLE SHEETS) ---
-
+# --- FUNÇÕES DO BANCO DE DADOS (Google Sheets) ---
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
-    """
-    Conecta-se ao Google Sheets usando os "Secrets" do Streamlit.
-    """
     try:
         creds_dict = dict(st.secrets.google_creds)
         scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive.file"
+            "https.www.googleapis.com/auth/spreadsheets",
+            "https.www.googleapis.com/auth/drive.file"
         ]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_url(st.secrets.GOOGLE_SHEET_URL).sheet1
         return sheet
     except Exception as e:
-        # Mostra o erro que vimos na image_36db77.png se os secrets estiverem errados
         st.error(f"Erro ao conectar ao Google Sheets: {e}") 
         st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL).")
         return None
 
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
-    """
-    Adiciona uma nova linha na planilha.
-    """
     try:
         nova_linha = [
             data, liga, jogo, mercado, 
@@ -79,21 +68,16 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
 
 @st.cache_data(ttl=60) 
 def carregar_historico_do_banco(_sheet):
-    """
-    Lê todos os dados da planilha e calcula a assertividade.
-    """
     try:
         dados = _sheet.get_all_records() 
         df = pd.DataFrame(dados)
         
-        # Se o DataFrame não estiver vazio, calcula os contadores
         if not df.empty:
             contagem_status = df['Status'].value_counts()
             greens = contagem_status.get('Green ✅', 0)
             reds = contagem_status.get('Red ❌', 0)
         else:
-            greens = 0
-            reds = 0
+            greens, reds = 0, 0
             
         return df, greens, reds
     except Exception as e:
@@ -101,14 +85,10 @@ def carregar_historico_do_banco(_sheet):
         return pd.DataFrame(), 0, 0
 
 def atualizar_status_no_banco(sheet, row_index, novo_status):
-    """
-    Atualiza a coluna 'Status' (H) de uma linha específica.
-    """
     try:
-        # gspread usa índice 1 (Linha 1 é o cabeçalho, Linha 2 é o índice 0 dos dados)
-        sheet.update_cell(row_index + 2, 8, novo_status) # Coluna 8 é a Coluna H (Status)
-        st.cache_data.clear() # Limpa o cache para recarregar o histórico
-        st.rerun() # Recarrega a página
+        sheet.update_cell(row_index + 2, 8, novo_status) # Coluna H
+        st.cache_data.clear() 
+        st.rerun() 
     except Exception as e:
         st.error(f"Erro ao atualizar status: {e}")
 
@@ -292,12 +272,18 @@ def buscar_jogos_por_data(id_liga, data_str):
         jogos_do_dia.append(jogo)
     return jogos_do_dia
 
+# --- ESTA É A FUNÇÃO CORRIGIDA ---
 def enviar_mensagem_telegram(mensagem):
-    # (Função idêntica)
+    """
+    Envia uma mensagem formatada para o grupo do Telegram.
+    """
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
         st.warning("Token do Telegram não configurado. Pulando envio.")
         return
-    url = f"https{config.TELEGRAM_TOKEN}/sendMessage" # <--- CORREÇÃO DO ERRO 'image_63e5b9.png'
+        
+    # A URL completa, incluindo o 'https://' e o 'bot'
+    url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
+    
     params = {'chat_id': config.TELEGRAM_CHAT_ID, 'text': mensagem, 'parse_mode': 'HTML'}
     try:
         response = requests.get(url, params=params, timeout=10)
@@ -309,6 +295,8 @@ def enviar_mensagem_telegram(mensagem):
             st.error(f"Erro ao enviar: {resultado.get('description')}")
     except Exception as e:
         st.error(f"Erro fatal no envio do Telegram: {e}")
+# --- FIM DA CORREÇÃO ---
+
 
 # --- A INTERFACE GRÁFICA (Função Principal ATUALIZADA) ---
 
@@ -339,7 +327,6 @@ nomes_mercado = {
 }
 
 # --- 1. BARRA LATERAL (SIDEBAR) ---
-# --- ESTA É A LÓGICA CORRIGIDA ---
 with st.sidebar:
     st.title("Controles do Robô 🤖")
     
@@ -364,7 +351,6 @@ with st.sidebar:
     with col_data2:
         st.button("Amanhã >", on_click=proximo_dia, use_container_width=True)
     
-    # Esta é a variável que estava causando o NameError. Agora ela está definida.
     data_selecionada = st.date_input(
         "Ou selecione uma data:",
         value=st.session_state.data_selecionada,
