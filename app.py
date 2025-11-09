@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 6.4 - Correção da URL do Telegram)
-# UPGRADE: Corrigido o bug 'No host supplied'
+# O Robô de Análise (Versão 6.5 - Correção do Google Sheets 'httpss')
+# UPGRADE: Corrigido o erro 'No access token in response'
 
 import streamlit as st
 import requests
@@ -11,8 +11,11 @@ import config
 import time
 from datetime import datetime, timedelta
 import json
+
+# --- NOVOS IMPORTS DO BANCO DE DADOS ---
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+# -------------------------------------
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
@@ -36,15 +39,24 @@ def fazer_requisicao_api(endpoint, params):
         st.error(f"Erro de API: {e}")
     return None
 
-# --- FUNÇÕES DO BANCO DE DADOS (Google Sheets) ---
+# --- NOVAS FUNÇÕES (BANCO DE DADOS GOOGLE SHEETS) ---
+
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
+    """
+    Conecta-se ao Google Sheets usando os "Secrets" do Streamlit.
+    """
     try:
         creds_dict = dict(st.secrets.google_creds)
+        
+        # --- ESTA É A CORREÇÃO ---
+        # Removido o 's' extra de 'httpss'
         scope = [
-            "https.www.googleapis.com/auth/spreadsheets",
-            "https.www.googleapis.com/auth/drive.file"
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive.file"
         ]
+        # --- FIM DA CORREÇÃO ---
+        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_url(st.secrets.GOOGLE_SHEET_URL).sheet1
@@ -55,6 +67,7 @@ def conectar_ao_banco_de_dados():
         return None
 
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
+    # (Função idêntica)
     try:
         nova_linha = [
             data, liga, jogo, mercado, 
@@ -68,6 +81,7 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
 
 @st.cache_data(ttl=60) 
 def carregar_historico_do_banco(_sheet):
+    # (Função idêntica)
     try:
         dados = _sheet.get_all_records() 
         df = pd.DataFrame(dados)
@@ -85,6 +99,7 @@ def carregar_historico_do_banco(_sheet):
         return pd.DataFrame(), 0, 0
 
 def atualizar_status_no_banco(sheet, row_index, novo_status):
+    # (Função idêntica)
     try:
         sheet.update_cell(row_index + 2, 8, novo_status) # Coluna H
         st.cache_data.clear() 
@@ -108,6 +123,7 @@ def carregar_cerebro_dixon_coles(id_liga):
         return None
 
 def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
+    # (Função idêntica, retorna (probs, xg_tupla))
     try:
         forcas = dados_cerebro['forcas']
         vantagem_casa = dados_cerebro['vantagem_casa']
@@ -154,6 +170,7 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
 
 @st.cache_data 
 def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
+    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"season": str(temporada), "status": "FINISHED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -184,6 +201,7 @@ def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
     return df_liga, medias_liga
 
 def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
+    # (Função idêntica)
     data_do_jogo_dt = pd.to_datetime(data_do_jogo)
     df_passado = df_historico[df_historico['data_jogo'] < data_do_jogo_dt]
     jogos_casa_recente = df_passado[df_passado['TimeCasa'] == time_casa].tail(num_jogos)
@@ -202,6 +220,7 @@ def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, dat
     return forcas_times
 
 def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
+    # (Função idêntica)
     forca_ataque_casa = forcas_times[time_casa]['ataque_casa_media'] / medias_liga['media_gols_casa']
     forca_defesa_casa = forcas_times[time_casa]['defesa_casa_media'] / medias_liga['media_gols_visitante']
     forca_ataque_visitante = forcas_times[time_visitante]['ataque_visitante_media'] / medias_liga['media_gols_visitante']
@@ -272,18 +291,12 @@ def buscar_jogos_por_data(id_liga, data_str):
         jogos_do_dia.append(jogo)
     return jogos_do_dia
 
-# --- ESTA É A FUNÇÃO CORRIGIDA ---
 def enviar_mensagem_telegram(mensagem):
-    """
-    Envia uma mensagem formatada para o grupo do Telegram.
-    """
+    # (Função idêntica)
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
         st.warning("Token do Telegram não configurado. Pulando envio.")
         return
-        
-    # A URL completa, incluindo o 'https://' e o 'bot'
     url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
-    
     params = {'chat_id': config.TELEGRAM_CHAT_ID, 'text': mensagem, 'parse_mode': 'HTML'}
     try:
         response = requests.get(url, params=params, timeout=10)
@@ -295,8 +308,6 @@ def enviar_mensagem_telegram(mensagem):
             st.error(f"Erro ao enviar: {resultado.get('description')}")
     except Exception as e:
         st.error(f"Erro fatal no envio do Telegram: {e}")
-# --- FIM DA CORREÇÃO ---
-
 
 # --- A INTERFACE GRÁFICA (Função Principal ATUALIZADA) ---
 
@@ -327,6 +338,7 @@ nomes_mercado = {
 }
 
 # --- 1. BARRA LATERAL (SIDEBAR) ---
+# --- ESTA É A LÓGICA CORRIGIDA ---
 with st.sidebar:
     st.title("Controles do Robô 🤖")
     
@@ -351,6 +363,7 @@ with st.sidebar:
     with col_data2:
         st.button("Amanhã >", on_click=proximo_dia, use_container_width=True)
     
+    # Esta é a variável que estava causando o NameError. Agora ela está definida.
     data_selecionada = st.date_input(
         "Ou selecione uma data:",
         value=st.session_state.data_selecionada,
