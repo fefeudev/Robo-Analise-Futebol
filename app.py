@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 6.5 - Correção do Google Sheets 'httpss')
-# UPGRADE: Corrigido o erro 'No access token in response'
+# O Robô de Análise (Versão 6.7 - Correção do Banco de Dados)
+# UPGRADE: Corrigido o bug que salvava "#ERROR!" e "texto" na planilha.
 
 import streamlit as st
 import requests
@@ -39,41 +39,52 @@ def fazer_requisicao_api(endpoint, params):
         st.error(f"Erro de API: {e}")
     return None
 
-# --- NOVAS FUNÇÕES (BANCO DE DADOS GOOGLE SHEETS) ---
+# --- FUNÇÕES DO BANCO DE DADOS (Google Sheets) ---
 
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
-    """
-    Conecta-se ao Google Sheets usando os "Secrets" do Streamlit.
-    """
+    # (Função idêntica, corrigida para 'https')
     try:
         creds_dict = dict(st.secrets.google_creds)
-        
-        # --- ESTA É A CORREÇÃO ---
-        # Removido o 's' extra de 'httpss'
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive.file"
         ]
-        # --- FIM DA CORREÇÃO ---
-        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_url(st.secrets.GOOGLE_SHEET_URL).sheet1
         return sheet
     except Exception as e:
         st.error(f"Erro ao conectar ao Google Sheets: {e}") 
-        st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL).")
+        st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL) e as permissões da API no Google Cloud.")
         return None
 
+# --- ESTA É A FUNÇÃO CORRIGIDA ---
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
-    # (Função idêntica)
+    """
+    Adiciona uma nova linha na planilha com NÚMEROS PUROS.
+    """
     try:
+        # Converte os dados para NÚMEROS puros (floats)
+        # 1.28 (Odd)
+        # 85.60 -> 0.8560 (Probabilidade)
+        # 10.63 -> 0.1063 (Valor)
+        odd_num = float(odd)
+        prob_robo_num = float(prob_robo) / 100.0
+        valor_num = float(valor) / 100.0
+
         nova_linha = [
-            data, liga, jogo, mercado, 
-            f"{odd:.2f}", f"{prob_robo:.2f}%", f"+{valor:.2f}%",
+            data, 
+            liga, 
+            jogo, 
+            mercado, 
+            odd_num,         # Salva 1.28
+            prob_robo_num,   # Salva 0.856
+            valor_num,       # Salva 0.1063
             "Aguardando ⏳" 
         ]
+        
+        # 'USER_ENTERED' vai interpretar os floats como números
         sheet.append_row(nova_linha, value_input_option='USER_ENTERED')
         print(f"Análise salva no banco de dados: {jogo} - {mercado}")
     except Exception as e:
@@ -123,7 +134,6 @@ def carregar_cerebro_dixon_coles(id_liga):
         return None
 
 def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
-    # (Função idêntica, retorna (probs, xg_tupla))
     try:
         forcas = dados_cerebro['forcas']
         vantagem_casa = dados_cerebro['vantagem_casa']
@@ -170,7 +180,6 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
 
 @st.cache_data 
 def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
-    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"season": str(temporada), "status": "FINISHED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -201,7 +210,6 @@ def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
     return df_liga, medias_liga
 
 def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
-    # (Função idêntica)
     data_do_jogo_dt = pd.to_datetime(data_do_jogo)
     df_passado = df_historico[df_historico['data_jogo'] < data_do_jogo_dt]
     jogos_casa_recente = df_passado[df_passado['TimeCasa'] == time_casa].tail(num_jogos)
@@ -220,7 +228,6 @@ def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, dat
     return forcas_times
 
 def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
-    # (Função idêntica)
     forca_ataque_casa = forcas_times[time_casa]['ataque_casa_media'] / medias_liga['media_gols_casa']
     forca_defesa_casa = forcas_times[time_casa]['defesa_casa_media'] / medias_liga['media_gols_visitante']
     forca_ataque_visitante = forcas_times[time_visitante]['ataque_visitante_media'] / medias_liga['media_gols_visitante']
@@ -268,8 +275,8 @@ def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.6
             oportunidades[mercado] = {
                 'odd_casa': odd,
                 'prob_casa_aposta': prob_casa_aposta * 100,
-                'prob_robo': prob_robo * 100,
-                'valor_encontrado': valor * 100
+                'prob_robo': prob_robo * 100, # Salva como 85.60
+                'valor_encontrado': valor * 100 # Salva como 10.63
             }
     return oportunidades
 
@@ -338,7 +345,6 @@ nomes_mercado = {
 }
 
 # --- 1. BARRA LATERAL (SIDEBAR) ---
-# --- ESTA É A LÓGICA CORRIGIDA ---
 with st.sidebar:
     st.title("Controles do Robô 🤖")
     
@@ -363,7 +369,6 @@ with st.sidebar:
     with col_data2:
         st.button("Amanhã >", on_click=proximo_dia, use_container_width=True)
     
-    # Esta é a variável que estava causando o NameError. Agora ela está definida.
     data_selecionada = st.date_input(
         "Ou selecione uma data:",
         value=st.session_state.data_selecionada,
@@ -583,6 +588,7 @@ with tab_analise:
                                 mensagem_telegram += f"   <code>Probabilidade: {dados['prob_robo']:.2f}%</code>\n"
                                 mensagem_telegram += f"   <code>Valor: +{dados['valor_encontrado']:.2f}%</code>\n"
                                 
+                                # --- SALVA NO BANCO DE DADOS ---
                                 if db_sheet is not None:
                                     salvar_analise_no_banco(
                                         sheet=db_sheet,
