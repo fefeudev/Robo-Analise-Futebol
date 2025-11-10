@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 6.7 - Correção do Banco de Dados)
-# UPGRADE: Corrigido o bug que salvava "#ERROR!" e "texto" na planilha.
+# O Robô de Análise (Versão 6.8 - Gráficos de Histórico)
+# UPGRADE: Adicionado st.bar_chart na aba Histórico.
 
 import streamlit as st
 import requests
@@ -43,7 +43,7 @@ def fazer_requisicao_api(endpoint, params):
 
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
-    # (Função idêntica, corrigida para 'https')
+    # (Função idêntica)
     try:
         creds_dict = dict(st.secrets.google_creds)
         scope = [
@@ -59,32 +59,18 @@ def conectar_ao_banco_de_dados():
         st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL) e as permissões da API no Google Cloud.")
         return None
 
-# --- ESTA É A FUNÇÃO CORRIGIDA ---
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
-    """
-    Adiciona uma nova linha na planilha com NÚMEROS PUROS.
-    """
+    # (Função idêntica, salva números puros)
     try:
-        # Converte os dados para NÚMEROS puros (floats)
-        # 1.28 (Odd)
-        # 85.60 -> 0.8560 (Probabilidade)
-        # 10.63 -> 0.1063 (Valor)
         odd_num = float(odd)
         prob_robo_num = float(prob_robo) / 100.0
         valor_num = float(valor) / 100.0
 
         nova_linha = [
-            data, 
-            liga, 
-            jogo, 
-            mercado, 
-            odd_num,         # Salva 1.28
-            prob_robo_num,   # Salva 0.856
-            valor_num,       # Salva 0.1063
+            data, liga, jogo, mercado, 
+            odd_num, prob_robo_num, valor_num,
             "Aguardando ⏳" 
         ]
-        
-        # 'USER_ENTERED' vai interpretar os floats como números
         sheet.append_row(nova_linha, value_input_option='USER_ENTERED')
         print(f"Análise salva no banco de dados: {jogo} - {mercado}")
     except Exception as e:
@@ -134,6 +120,7 @@ def carregar_cerebro_dixon_coles(id_liga):
         return None
 
 def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
+    # (Função idêntica)
     try:
         forcas = dados_cerebro['forcas']
         vantagem_casa = dados_cerebro['vantagem_casa']
@@ -180,6 +167,7 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
 
 @st.cache_data 
 def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
+    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"season": str(temporada), "status": "FINISHED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -210,6 +198,7 @@ def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
     return df_liga, medias_liga
 
 def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
+    # (Função idêntica)
     data_do_jogo_dt = pd.to_datetime(data_do_jogo)
     df_passado = df_historico[df_historico['data_jogo'] < data_do_jogo_dt]
     jogos_casa_recente = df_passado[df_passado['TimeCasa'] == time_casa].tail(num_jogos)
@@ -228,6 +217,7 @@ def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, dat
     return forcas_times
 
 def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
+    # (Função idêntica)
     forca_ataque_casa = forcas_times[time_casa]['ataque_casa_media'] / medias_liga['media_gols_casa']
     forca_defesa_casa = forcas_times[time_casa]['defesa_casa_media'] / medias_liga['media_gols_visitante']
     forca_ataque_visitante = forcas_times[time_visitante]['ataque_visitante_media'] / medias_liga['media_gols_visitante']
@@ -275,8 +265,8 @@ def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.6
             oportunidades[mercado] = {
                 'odd_casa': odd,
                 'prob_casa_aposta': prob_casa_aposta * 100,
-                'prob_robo': prob_robo * 100, # Salva como 85.60
-                'valor_encontrado': valor * 100 # Salva como 10.63
+                'prob_robo': prob_robo * 100,
+                'valor_encontrado': valor * 100
             }
     return oportunidades
 
@@ -588,11 +578,10 @@ with tab_analise:
                                 mensagem_telegram += f"   <code>Probabilidade: {dados['prob_robo']:.2f}%</code>\n"
                                 mensagem_telegram += f"   <code>Valor: +{dados['valor_encontrado']:.2f}%</code>\n"
                                 
-                                # --- SALVA NO BANCO DE DADOS ---
                                 if db_sheet is not None:
                                     salvar_analise_no_banco(
                                         sheet=db_sheet,
-                                        data=data_selecionada.strftime('%Y-%m-%d'), # Usa a data selecionada
+                                        data=data_selecionada.strftime('%Y-%m-%d'), 
                                         liga=liga_selecionada_nome,
                                         jogo=f"{jogo['time_casa']} vs {jogo['time_visitante']}",
                                         mercado=mercado_limpo,
