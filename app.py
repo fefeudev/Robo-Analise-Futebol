@@ -17,6 +17,97 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 # -------------------------------------
 
+st.set_page_config(
+    page_title="Robô de Valor (BD)",
+    page_icon="🤖", 
+    layout="wide"
+)
+
+### MELHORIA 3 (DESIGN) - INÍCIO (CSS Customizado) ###
+st.markdown("""
+<style>
+    /* Fundo principal da aplicação */
+    .stApp {
+        background-color: #0A0A1A; /* Fundo mais escuro */
+    }
+
+    /* Cor de fundo da sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #0F1116; /* Um pouco mais claro que o fundo */
+        border-right: 1px solid #2a2a3a;
+    }
+
+    /* Título Principal (H1) */
+    [data-testid="stAppViewContainer"] > h1 {
+        color: #FAFAFA;
+        font-weight: 600;
+    }
+    
+    /* Títulos de Seção (H2 - st.header) */
+    h2 {
+        color: #FAFAFA;
+    }
+
+    /* Títulos de Sub-seção (H3 - st.subheader) */
+    h3 {
+        color: #4A90E2; /* Azul profissional */
+        font-weight: 600;
+    }
+
+    /* Cards de Métrica (st.metric) */
+    [data-testid="stMetric"] {
+        background-color: #1F202B;
+        border: 1px solid #333344;
+        border-radius: 10px;
+        padding: 15px;
+    }
+    
+    /* Labels das Métricas */
+    [data-testid="stMetricLabel"] {
+        color: #AAAAEE; /* Um roxo/azul claro */
+    }
+
+    /* Botões */
+    [data-testid="stButton"] > button {
+        border-radius: 8px;
+        background-color: #4A90E2;
+        color: white;
+        border: none;
+        font-weight: 600;
+    }
+    [data-testid="stButton"] > button:hover {
+        background-color: #3A70C1; /* Um pouco mais escuro no hover */
+        color: white;
+        border: none;
+    }
+    
+    /* Botões de data da sidebar (para não ficarem azuis) */
+    [data-testid="stSidebar"] [data-testid="stButton"] > button {
+        background-color: #2a2a3a;
+    }
+    [data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
+        background-color: #3a3a4a;
+    }
+
+
+    /* Headers dos Expanders (st.expander) */
+    [data-testid="stExpander"] > summary {
+        background-color: #1F202B;
+        border-radius: 8px;
+        border: 1px solid #333344;
+    }
+    [data-testid="stExpander"] > summary:hover {
+        background-color: #2a2a3a;
+    }
+
+</style>
+""", unsafe_allow_html=True)
+### MELHORIA 3 (DESIGN) - FIM ###
+
+# --- FUNÇÕES GLOBAIS DE API (football-data.org) ---
+@st.cache_data 
+# ... (restante do código permanece igual) ...
+
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="Robô de Valor (BD)",
@@ -1004,3 +1095,4 @@ with tab_times:
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
 ### MELHORIA 7 - FIM ###
+
