@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.5 - Filtros no Histórico)
-# UPGRADE: Adicionados filtros interativos (multiselect) na aba Histórico.
+# O Robô de Análise (Versão 7.6 - CSS Design)
+# UPGRADE: Adicionado CSS customizado para layout profissional.
 
 import streamlit as st
 import requests
@@ -17,6 +17,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 # -------------------------------------
 
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="Robô de Valor (BD)",
     page_icon="🤖", 
@@ -103,17 +104,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 ### MELHORIA 3 (DESIGN) - FIM ###
-
-# --- FUNÇÕES GLOBAIS DE API (football-data.org) ---
-@st.cache_data 
-# ... (restante do código permanece igual) ...
-
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(
-    page_title="Robô de Valor (BD)",
-    page_icon="🤖", 
-    layout="wide"
-)
 
 # --- FUNÇÕES GLOBAIS DE API (football-data.org) ---
 @st.cache_data 
@@ -419,7 +409,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.5 - Filtros no Histórico") # Versão atualizada
+    st.caption("v7.6 - CSS Design") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -1095,4 +1085,3 @@ with tab_times:
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
 ### MELHORIA 7 - FIM ###
-
