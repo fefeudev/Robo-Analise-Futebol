@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.0 - Ranking de Times)
-# UPGRADE: Adicionada Melhoria A (Ranking da Liga) na aba "Analisar Times".
+# O Robô de Análise (Versão 7.1 - Correção de Parâmetro)
+# UPGRADE: Corrigido o nome do parâmetro de 'min_val' para 'min_value'.
 
 import streamlit as st
 import requests
@@ -328,7 +328,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.0 - Híbrido com Ranking")
+    st.caption("v7.1 - Híbrido com Ranking") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -839,8 +839,9 @@ with tab_times:
                         "Força Geral": st.column_config.ProgressColumn(
                             "Força Geral (Ataque - Defesa)", 
                             help="Métrica combinada. Mais alto = melhor time.",
-                            min_val=float(df_liga['Força Geral'].min()),
-                            max_val=float(df_liga['Força Geral'].max())
+                            # CORREÇÃO APLICADA AQUI:
+                            min_value=float(df_liga['Força Geral'].min()),
+                            max_value=float(df_liga['Força Geral'].max())
                         )
                     },
                     use_container_width=True,
