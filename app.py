@@ -700,20 +700,25 @@ with tab_historico:
 
             if not df_resultados.empty:
                 try:
-                    # Gráfico 1: Desempenho por Mercado
-                    st.subheader("📊 Desempenho por Mercado")
-                    desempenho_mercado = df_resultados.groupby('Mercado')['Status'].value_counts().unstack(fill_value=0)
-                    # Garante a ordem das colunas para as cores
-                    if 'Green ✅' not in desempenho_mercado: desempenho_mercado['Green ✅'] = 0
-                    if 'Red ❌' not in desempenho_mercado: desempenho_mercado['Red ❌'] = 0
-                    st.bar_chart(desempenho_mercado[['Green ✅', 'Red ❌']], color=["#008000", "#FF4B4B"])
+                    # ### ALTERAÇÃO SOLICITADA: Criar colunas para os gráficos ###
+                    col_graf1, col_graf2 = st.columns(2)
+                    
+                    with col_graf1:
+                        # Gráfico 1: Desempenho por Mercado
+                        st.subheader("📊 Desempenho por Mercado")
+                        desempenho_mercado = df_resultados.groupby('Mercado')['Status'].value_counts().unstack(fill_value=0)
+                        # Garante a ordem das colunas para as cores
+                        if 'Green ✅' not in desempenho_mercado: desempenho_mercado['Green ✅'] = 0
+                        if 'Red ❌' not in desempenho_mercado: desempenho_mercado['Red ❌'] = 0
+                        st.bar_chart(desempenho_mercado[['Green ✅', 'Red ❌']], color=["#008000", "#FF4B4B"])
 
-                    # Gráfico 2: Desempenho por Liga
-                    st.subheader("📈 Desempenho por Liga")
-                    desempenho_liga = df_resultados.groupby('Liga')['Status'].value_counts().unstack(fill_value=0)
-                    if 'Green ✅' not in desempenho_liga: desempenho_liga['Green ✅'] = 0
-                    if 'Red ❌' not in desempenho_liga: desempenho_liga['Red ❌'] = 0
-                    st.bar_chart(desempenho_liga[['Green ✅', 'Red ❌']], color=["#008000", "#FF4B4B"])
+                    with col_graf2:
+                        # Gráfico 2: Desempenho por Liga
+                        st.subheader("📈 Desempenho por Liga")
+                        desempenho_liga = df_resultados.groupby('Liga')['Status'].value_counts().unstack(fill_value=0)
+                        if 'Green ✅' not in desempenho_liga: desempenho_liga['Green ✅'] = 0
+                        if 'Red ❌' not in desempenho_liga: desempenho_liga['Red ❌'] = 0
+                        st.bar_chart(desempenho_liga[['Green ✅', 'Red ❌']], color=["#008000", "#FF4B4B"])
 
                 except Exception as e:
                     st.error(f"Erro ao gerar gráficos: {e}")
