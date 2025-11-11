@@ -407,36 +407,50 @@ st.title("Painel de Análise de Valor (Híbrido) 💾")
 # Conecta ao nosso "banco de dados"
 db_sheet = conectar_ao_banco_de_dados()
 
+# --- TREINA O CÉREBRO (MOVIDO PARA FORA DAS ABAS) ---
+# Isso garante que o cérebro seja carregado uma vez, não importa qual aba está ativa.
+MODO_CEREBRO = "FALHA" 
+dados_cerebro_dc = None
+df_historico_poisson = None
+medias_liga_poisson = None
+
+with st.spinner(f"Tentando carregar Cérebro Dixon-Coles para {LIGA_ATUAL}..."):
+    dados_cerebro_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
+
+if dados_cerebro_dc is not None:
+    MODO_CEREBRO = "DIXON_COLES"
+else:
+    with st.spinner(f"Cérebro DC não encontrado. Treinando Cérebro Poisson para {LIGA_ATUAL}..."):
+        df_historico_poisson, medias_liga_poisson = carregar_e_treinar_cerebro_poisson(LIGA_ATUAL, TEMPORADA_ATUAL)
+    if df_historico_poisson is not None:
+        MODO_CEREBRO = "POISSON_RECENTE"
+
+# --- FIM DO BLOCO MOVIDO ---
+
+
 # Cria as duas abas principais
-tab_analise, tab_historico = st.tabs(["📊 Analisar Jogos", "📈 Histórico de Assertividade"])
+### MELHORIA 7 - Adicionando a aba "Analisar Times" ###
+tab_analise, tab_historico, tab_times = st.tabs([
+    "📊 Analisar Jogos", 
+    "📈 Histórico de Assertividade",
+    "🔎 Analisar Times"
+])
 
 # --- ABA 1: ANALISAR JOGOS ---
 with tab_analise:
     
-    # --- TREINA O CÉREBRO (AGORA DENTRO DA ABA) ---
+    # --- Mostra o status do Cérebro (a lógica foi movida para cima) ---
     emoji_liga_selecionada = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
     st.subheader(f"Liga Selecionada: {emoji_liga_selecionada} {liga_selecionada_nome}")
     
-    MODO_CEREBRO = "FALHA" 
-    with st.spinner(f"Tentando carregar Cérebro Dixon-Coles para {LIGA_ATUAL}..."):
-        dados_cerebro_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
-    
-    if dados_cerebro_dc is not None:
+    if MODO_CEREBRO == "DIXON_COLES":
         st.success(f"Cérebro Avançado (Dixon-Coles) carregado!")
         st.caption(f"Treinado em: {dados_cerebro_dc['data_treinamento'].split('T')[0]}")
-        MODO_CEREBRO = "DIXON_COLES"
-        df_historico_poisson = None
-        medias_liga_poisson = None
-    else:
-        st.warning(f"Cérebro Dixon-Coles não encontrado para {LIGA_ATUAL}.")
+    elif MODO_CEREBRO == "POISSON_RECENTE":
+        st.success(f"Cérebro Poisson treinado com {len(df_historico_poisson)} jogos.")
         st.info("Usando Cérebro de 'Forma Recente' (Poisson) como fallback.")
-        with st.spinner(f"Treinando Cérebro Poisson para {LIGA_ATUAL}..."):
-            df_historico_poisson, medias_liga_poisson = carregar_e_treinar_cerebro_poisson(LIGA_ATUAL, TEMPORADA_ATUAL)
-        if df_historico_poisson is None:
-            st.error(f"Falha ao carregar dados da {LIGA_ATUAL}.")
-        else:
-            st.success(f"Cérebro Poisson treinado com {len(df_historico_poisson)} jogos.")
-            MODO_CEREBRO = "POISSON_RECENTE"
+    else:
+        st.error(f"Falha ao carregar dados da {LIGA_ATUAL}. O robô não pode analisar.")
     
     st.divider() # Linha Horizontal
 
@@ -559,19 +573,41 @@ with tab_analise:
                         )
                         if resultado_previsao:
                             probs_robo, xg_tupla = resultado_previsao
-                    elif MODO_CEREBRO == "POISSON_RECENTE":
-                        forcas_times = calcular_forcas_recente_poisson(
-                            df_historico_poisson, jogo['time_casa'], jogo['time_visitante'], jogo['data_jogo']
-                        )
-                        if forcas_times:
-                            resultado_previsao = prever_jogo_poisson(
-                                forcas_times, medias_liga_poisson,
-                                jogo['time_casa'], jogo['time_visitante'] 
-                            )
-                            if resultado_previsao:
-                                probs_robo, xg_tupla = resultado_previsao
                     
                     if probs_robo:
+
+                        ### MELHORIA 9 - INÍCIO (Termômetro de Tendência) ###
+                        st.subheader("🌡️ Termômetro do Cérebro")
+                        col_t1, col_t2 = st.columns(2)
+                
+                        # Lógica 1x2
+                        prob_casa = probs_robo['vitoria_casa']
+                        prob_empate = probs_robo['empate']
+                        prob_fora = probs_robo['vitoria_visitante']
+                
+                        with col_t1:
+                            st.markdown("**Resultado (1x2)**")
+                            if max(prob_casa, prob_empate, prob_fora) == prob_casa:
+                                st.info(f"Tendência: **{jogo['time_casa']}** é o favorito ({prob_casa:.1%})")
+                            elif max(prob_casa, prob_empate, prob_fora) == prob_empate:
+                                st.info(f"Tendência: **Empate** é o resultado mais provável ({prob_empate:.1%})")
+                            else:
+                                st.info(f"Tendência: **{jogo['time_visitante']}** é o favorito ({prob_fora:.1%})")
+                        
+                        # Lógica Gols
+                        prob_over = probs_robo['over_2_5']
+                        with col_t2:
+                            st.markdown("**Gols (Mais/Menos 2.5)**")
+                            if prob_over > 0.55: # 55% de chance de Over
+                                st.warning(f"Tendência: Jogo para **Mais de 2.5 Gols** ({prob_over:.1%})")
+                            elif prob_over < 0.45: # 45% de chance de Over (ou 55% de Under)
+                                st.success(f"Tendência: Jogo para **Menos de 2.5 Gols** (Over: {prob_over:.1%})")
+                            else:
+                                st.info("Tendência: Mercado de Gols indefinido.")
+                                
+                        st.divider()
+                        ### MELHORIA 9 - FIM ###
+
                         oportunidades = encontrar_valor(
                             probs_robo, odds_manuais, 
                             filtro_prob_minima, filtro_valor_minimo
@@ -780,3 +816,49 @@ with tab_historico:
             # st.subheader("Atualizar Status")
             # ...
             # ...
+            
+}
+
+### MELHORIA 7 - INÍCIO (Nova Aba: Analisar Times) ###
+with tab_times:
+    st.header("🔎 Dashboard de Análise de Times")
+    st.caption("Veja as forças de Ataque e Defesa calculadas pelo Cérebro Dixon-Coles.")
+
+    # Pega o emoji da liga que já foi selecionada na sidebar
+    emoji_liga_selecionada = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
+
+    # Verifica se o cérebro DC foi carregado com sucesso (variáveis agora são "globais" para as abas)
+    if MODO_CEREBRO == "DIXON_COLES" and dados_cerebro_dc:
+        st.subheader(f"Forças dos Times - {emoji_liga_selecionada} {liga_selecionada_nome}")
+        
+        # Pega a lista de times do cérebro e ordena
+        try:
+            times_da_liga = sorted(list(dados_cerebro_dc['forcas'].keys()))
+            time_selecionado = st.selectbox(
+                "Selecione um time para analisar:",
+                times_da_liga,
+                key="select_time_dashboard",
+                index=None, # Começa sem time selecionado
+                placeholder="Escolha um time..."
+            )
+
+            if time_selecionado:
+                # Pega as estatísticas e exibe
+                forcas = dados_cerebro_dc['forcas'][time_selecionado]
+                col1, col2 = st.columns(2)
+                col1.metric("Força de Ataque (DC)", 
+                             f"{forcas['ataque']:.3f}", 
+                             help="Valor da força de ataque do time. Positivo é bom.")
+                col2.metric("Força de Defesa (DC)", 
+                             f"{forcas['defesa']:.3f}", 
+                             help="Valor da força de defesa. Negativo é bom (sofre menos gols).",
+                             delta_color="inverse") # Negativo é bom
+        except Exception as e:
+            st.error(f"Erro ao processar o cérebro DC: {e}")
+    
+    elif MODO_CEREBRO == "POISSON_RECENTE":
+        st.info("O Dashboard de Times só está disponível para ligas com um Cérebro Dixon-Coles (DC) pré-treinado.")
+        st.warning(f"A liga selecionada ({liga_selecionada_nome}) está usando o Cérebro Poisson de fallback.")
+    else:
+        st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
+### MELHORIA 7 - FIM ###
