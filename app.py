@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.2 - Simulador xG)
-# UPGRADE: Adicionada Melhoria B (Simulador xG vs Média) na aba "Analisar Times".
+# O Robô de Análise (Versão 7.3 - Dashboard Poisson)
+# UPGRADE: Adicionada Melhoria C (Dashboard de Forma Recente) na aba "Analisar Times".
 
 import streamlit as st
 import requests
@@ -328,7 +328,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.2 - Híbrido com Simulador") # Versão atualizada
+    st.caption("v7.3 - Dashboard Poisson") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -783,14 +783,13 @@ with tab_historico:
             st.dataframe(df_para_mostrar, use_container_width=True)
 
 
-### MELHORIA 7 - INÍCIO (Nova Aba: Analisar Times) ###
+### MELHORIA 7 (A, B, C) - INÍCIO (Nova Aba: Analisar Times) ###
 with tab_times:
     st.header("🔎 Dashboard de Análise de Times")
     
-    # Pega o emoji da liga que já foi selecionada na sidebar
     emoji_liga_selecionada = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
 
-    # Verifica se o cérebro DC foi carregado com sucesso (variáveis agora são "globais" para as abas)
+    # CASO 1: Cérebro DIXON-COLES está ativo
     if MODO_CEREBRO == "DIXON_COLES" and dados_cerebro_dc:
         
         try:
@@ -834,15 +833,11 @@ with tab_times:
 
                     # 4. Simular Jogos
                     # Jogo 1: Time Selecionado (Casa) vs. Time Médio (Fora)
-                    # xG Casa = ataque_time + defesa_media + vantagem_casa
                     xg_casa_sim1 = np.exp(ataque_time + avg_defesa + vantagem_casa)
-                    # xG Fora = ataque_medio + defesa_time
                     xg_fora_sim1 = np.exp(avg_ataque + defesa_time)
 
                     # Jogo 2: Time Médio (Casa) vs. Time Selecionado (Fora)
-                    # xG Casa = ataque_medio + defesa_time + vantagem_casa
                     xg_casa_sim2 = np.exp(avg_ataque + defesa_time + vantagem_casa)
-                    # xG Fora = ataque_time + defesa_media
                     xg_fora_sim2 = np.exp(ataque_time + avg_defesa)
 
                     # 5. Exibir métricas
@@ -898,9 +893,72 @@ with tab_times:
             st.error(f"Erro ao processar o ranking do cérebro DC: {e}")
         ### MELHORIA A - FIM ###
     
-    elif MODO_CEREBRO == "POISSON_RECENTE":
-        st.info("O Dashboard de Times só está disponível para ligas com um Cérebro Dixon-Coles (DC) pré-treinado.")
-        st.warning(f"A liga selecionada ({liga_selecionada_nome}) está usando o Cérebro Poisson de fallback.")
+    # CASO 2: Cérebro POISSON está ativo
+    elif MODO_CEREBRO == "POISSON_RECENTE" and df_historico_poisson is not None:
+        
+        ### MELHORIA C - INÍCIO (Dashboard de Forma Recente) ###
+        st.subheader(f"📈 Análise de Forma Recente (Poisson) - {emoji_liga_selecionada} {liga_selecionada_nome}")
+        st.info(f"Esta liga usa o Cérebro Poisson, que se baseia nos últimos 6 jogos. Veja abaixo as estatísticas de 'forma' de cada time.")
+        
+        # 1. Pegar lista de times
+        times_na_liga = pd.concat([df_historico_poisson['TimeCasa'], df_historico_poisson['TimeVisitante']]).unique()
+        times_na_liga.sort() # Ordenar alfabeticamente
+        
+        if len(times_na_liga) == 0:
+            st.warning("Nenhum time encontrado no histórico desta liga.")
+        else:
+            # 2. Selectbox para escolher o time
+            time_selecionado = st.selectbox(
+                "Selecione um time para analisar a forma recente:",
+                options=times_na_liga,
+                index=0
+            )
+            
+            if time_selecionado:
+                num_jogos_recente = 6 # Conforme usado na função de prever
+                
+                # 3. Filtrar os últimos 6 jogos (o DF já está ordenado por data)
+                jogos_casa_recente = df_historico_poisson[df_historico_poisson['TimeCasa'] == time_selecionado].tail(num_jogos_recente)
+                jogos_fora_recente = df_historico_poisson[df_historico_poisson['TimeVisitante'] == time_selecionado].tail(num_jogos_recente)
+                
+                # 4. Calcular médias, tratando se o DF for vazio (time novo)
+                gols_marcados_casa = jogos_casa_recente['GolsCasa'].mean() if not jogos_casa_recente.empty else 0.0
+                gols_sofridos_casa = jogos_casa_recente['GolsVisitante'].mean() if not jogos_casa_recente.empty else 0.0
+                
+                gols_marcados_fora = jogos_fora_recente['GolsVisitante'].mean() if not jogos_fora_recente.empty else 0.0
+                gols_sofridos_fora = jogos_fora_recente['GolsCasa'].mean() if not jogos_fora_recente.empty else 0.0
+                
+                # 5. Exibir métricas
+                st.markdown(f"**Análise de Forma (Baseada nos últimos {num_jogos_recente} jogos)**")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**Jogando EM CASA**")
+                    st.metric(f"Gols Marcados (Média)", f"{gols_marcados_casa:.2f}")
+                    st.metric(f"Gols Sofridos (Média)", f"{gols_sofridos_casa:.2f}")
+                    
+                with col2:
+                    st.markdown("**Jogando FORA**")
+                    st.metric(f"Gols Marcados (Média)", f"{gols_marcados_fora:.2f}")
+                    st.metric(f"Gols Sofridos (Média)", f"{gols_sofridos_fora:.2f}")
+                    
+                st.divider()
+                
+                # 6. (Opcional) Mostrar os jogos usados
+                with st.expander(f"Ver últimos {num_jogos_recente} jogos em casa usados no cálculo"):
+                    if jogos_casa_recente.empty:
+                        st.write(f"Nenhum jogo recente em casa encontrado no histórico para {time_selecionado}.")
+                    else:
+                        st.dataframe(jogos_casa_recente[['data_jogo', 'TimeCasa', 'TimeVisitante', 'GolsCasa', 'GolsVisitante']].sort_values(by='data_jogo', ascending=False), use_container_width=True, hide_index=True)
+                
+                with st.expander(f"Ver últimos {num_jogos_recente} jogos fora usados no cálculo"):
+                    if jogos_fora_recente.empty:
+                        st.write(f"Nenhum jogo recente fora encontrado no histórico para {time_selecionado}.")
+                    else:
+                        st.dataframe(jogos_fora_recente[['data_jogo', 'TimeCasa', 'TimeVisitante', 'GolsCasa', 'GolsVisitante']].sort_values(by='data_jogo', ascending=False), use_container_width=True, hide_index=True)
+        ### MELHORIA C - FIM ###
+
+    # CASO 3: Nenhum cérebro carregado
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
 ### MELHORIA 7 - FIM ###
