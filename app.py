@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.1 - Correção de Parâmetro)
-# UPGRADE: Corrigido o nome do parâmetro de 'min_val' para 'min_value'.
+# O Robô de Análise (Versão 7.2 - Simulador xG)
+# UPGRADE: Adicionada Melhoria B (Simulador xG vs Média) na aba "Analisar Times".
 
 import streamlit as st
 import requests
@@ -328,7 +328,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.1 - Híbrido com Ranking") # Versão atualizada
+    st.caption("v7.2 - Híbrido com Simulador") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -792,12 +792,10 @@ with tab_times:
 
     # Verifica se o cérebro DC foi carregado com sucesso (variáveis agora são "globais" para as abas)
     if MODO_CEREBRO == "DIXON_COLES" and dados_cerebro_dc:
-        st.subheader(f"Ranking de Forças (DC) - {emoji_liga_selecionada} {liga_selecionada_nome}")
         
-        ### MELHORIA A - INÍCIO (Ranking da Liga) ###
         try:
+            # --- Bloco de dados para ambas as melhorias ---
             lista_forcas = []
-            # 1. Loop para extrair dados
             for time, forcas in dados_cerebro_dc['forcas'].items():
                 lista_forcas.append({
                     'Time': time,
@@ -805,20 +803,69 @@ with tab_times:
                     'Defesa': forcas['defesa']
                 })
 
-            # 2. Converter para DataFrame
             if not lista_forcas:
                 st.warning("Nenhum time encontrado nos dados do cérebro.")
             else:
                 df_liga = pd.DataFrame(lista_forcas)
-                
-                # 3. Criar "Força Geral" (Ataque alto é bom, Defesa baixa (negativa) é bom)
                 df_liga['Força Geral'] = df_liga['Ataque'] - df_liga['Defesa']
-                
-                # 4. Exibir o DataFrame formatado
-                st.info("Clique no título de uma coluna para ordenar. 'Força Geral' é a melhor métrica de ranking.")
-                
-                # Ordena por padrão pela Força Geral
                 df_liga = df_liga.sort_values(by="Força Geral", ascending=False)
+                
+                ### MELHORIA B - INÍCIO (Simulador de xG) ###
+                st.subheader(f"🤖 Simulador de xG vs. Média da Liga ({emoji_liga_selecionada} {liga_selecionada_nome})")
+                st.info("Traduza os 'números de força' em Gols Esperados (xG). Selecione um time para ver qual seria o xG esperado dele contra um time 'médio' da liga.")
+
+                # 1. Calcular o "Time Médio"
+                avg_ataque = df_liga['Ataque'].mean()
+                avg_defesa = df_liga['Defesa'].mean()
+                vantagem_casa = dados_cerebro_dc['vantagem_casa']
+
+                # 2. Selectbox para escolher o time (ordena a lista de times do DF)
+                time_para_simular = st.selectbox(
+                    "Selecione um time para simular:",
+                    options=df_liga['Time'], # Usa a lista de times do DF já ordenado
+                    index=0 # Pega o primeiro time (o mais forte) por padrão
+                )
+
+                if time_para_simular:
+                    # 3. Pegar as forças do time selecionado
+                    forcas_time = dados_cerebro_dc['forcas'][time_para_simular]
+                    ataque_time = forcas_time['ataque']
+                    defesa_time = forcas_time['defesa']
+
+                    # 4. Simular Jogos
+                    # Jogo 1: Time Selecionado (Casa) vs. Time Médio (Fora)
+                    # xG Casa = ataque_time + defesa_media + vantagem_casa
+                    xg_casa_sim1 = np.exp(ataque_time + avg_defesa + vantagem_casa)
+                    # xG Fora = ataque_medio + defesa_time
+                    xg_fora_sim1 = np.exp(avg_ataque + defesa_time)
+
+                    # Jogo 2: Time Médio (Casa) vs. Time Selecionado (Fora)
+                    # xG Casa = ataque_medio + defesa_time + vantagem_casa
+                    xg_casa_sim2 = np.exp(avg_ataque + defesa_time + vantagem_casa)
+                    # xG Fora = ataque_time + defesa_media
+                    xg_fora_sim2 = np.exp(ataque_time + avg_defesa)
+
+                    # 5. Exibir métricas
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric(
+                            label=f"xG de {time_para_simular} jogando EM CASA",
+                            value=f"{xg_casa_sim1:.2f}",
+                            help=f"Expectativa de gols contra um time 'médio' da liga. (Adversário faria {xg_fora_sim1:.2f} xG)"
+                        )
+                    with col2:
+                        st.metric(
+                            label=f"xG de {time_para_simular} jogando FORA",
+                            value=f"{xg_fora_sim2:.2f}",
+                            help=f"Expectativa de gols contra um time 'médio' da liga. (Adversário faria {xg_casa_sim2:.2f} xG)"
+                        )
+                
+                st.divider()
+                ### MELHORIA B - FIM ###
+                
+                ### MELHORIA A - INÍCIO (Ranking da Liga) ###
+                st.subheader(f"Ranking de Forças Completo (DC) - {emoji_liga_selecionada} {liga_selecionada_nome}")
+                st.info("Clique no título de uma coluna para ordenar. 'Força Geral' é a melhor métrica de ranking.")
                 
                 st.dataframe(
                     df_liga.style.format({
@@ -839,13 +886,12 @@ with tab_times:
                         "Força Geral": st.column_config.ProgressColumn(
                             "Força Geral (Ataque - Defesa)", 
                             help="Métrica combinada. Mais alto = melhor time.",
-                            # CORREÇÃO APLICADA AQUI:
                             min_value=float(df_liga['Força Geral'].min()),
                             max_value=float(df_liga['Força Geral'].max())
                         )
                     },
                     use_container_width=True,
-                    hide_index=True # Esconde o índice (0, 1, 2...)
+                    hide_index=True 
                 )
         
         except Exception as e:
