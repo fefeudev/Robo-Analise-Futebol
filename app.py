@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.3 - Dashboard Poisson)
-# UPGRADE: Adicionada Melhoria C (Dashboard de Forma Recente) na aba "Analisar Times".
+# O Robô de Análise (Versão 7.4 - Formulário Consolidado)
+# UPGRADE: Removidas as abas do formulário de odds (Melhoria 1)
 
 import streamlit as st
 import requests
@@ -328,7 +328,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.3 - Dashboard Poisson") # Versão atualizada
+    st.caption("v7.4 - Formulário Consolidado") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -513,25 +513,29 @@ with tab_analise:
         with st.form(key=f"form_jogo_{i}"):
             st.header(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}")
             
-            tab_1x2, tab_dc, tab_gols = st.tabs(["📊 Resultado (1x2)", "🤝 Chance Dupla", "⚽ Gols"])
-            with tab_1x2:
-                st.write("**Mercado 1X2**")
-                col1, col2, col3 = st.columns(3)
-                with col1: odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
-                with col2: odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
-                with col3: odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
-            with tab_dc:
-                st.write("**Chance Dupla**")
-                col_dc1, col_dc2, col_dc3 = st.columns(3)
-                with col_dc1: odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
-                with col_dc2: odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
-                with col_dc3: odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
-            with tab_gols:
-                st.write("**Gols**")
-                col4, col5 = st.columns(2)
-                with col4: odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
-                with col5: odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
+            ### MELHORIA 1 (DESIGN) - INÍCIO (Formulário Consolidado) ###
+            st.subheader("Inserir Odds do Jogo")
+            col_form1, col_form2 = st.columns(2)
+
+            with col_form1:
+                st.markdown("**📊 Resultado (1x2)**")
+                odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
+                odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
+                odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
+                
+                st.markdown("**⚽ Gols**")
+                odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
+                odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
+
+            with col_form2:
+                st.markdown("**🤝 Chance Dupla**")
+                odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
+                odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
+                odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
             
+            st.divider()
+            ### MELHORIA 1 (DESIGN) - FIM ###
+
             submitted = st.form_submit_button("Analisar este Jogo")
 
             if submitted:
@@ -736,7 +740,7 @@ with tab_historico:
                         atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
                     
                 if col_b2.button("Marcar como Red ❌", use_container_width=True, key="btn_red"):
-                    if analise_seleciona_da: # Verifica se algo foi selecionado
+                    if analise_selecionada: # Verifica se algo foi selecionado
                         indice_real_df = int(analise_selecionada.split(':')[0])
                         atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
         ### MELHORIA 5 - FIM ###
