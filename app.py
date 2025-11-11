@@ -594,50 +594,6 @@ with tab_analise:
                     else:
                         st.error("Não foi possível calcular as probabilidades do robô (Times novos ou erro no Cérebro).")
 
-# --- ABA 2: HISTÓRICO DE ASSERTIVIDADE ---
-with tab_historico:
-    st.header("📈 Histórico de Assertividade")
-    st.caption("Aqui fica o registro de todas as análises enviadas ao Telegram.")
-
-    if db_sheet is None:
-        st.error("Não foi possível conectar ao Google Sheets. Verifique seus 'Secrets'.")
-    else:
-        # 1. Carrega os dados da planilha
-        df_historico_db, greens, reds = carregar_historico_do_banco(db_sheet)
-
-        # 2. Mostra os Contadores (Métricas)
-        st.subheader("Desempenho Geral")
-        total_analises = greens + reds
-        assertividade = (greens / total_analises * 100) if total_analises > 0 else 0
-
-        col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric("Greens ✅", f"{greens}")
-        col_m2.metric("Reds ❌", f"{reds}")
-        col_m3.metric("Assertividade", f"{assertividade:.1f}%")
-
-        # --- INÍCIO DO CÓDIGO CORRIGIDO ---
-        if total_analises > 0:
-            # 1. Cria o DataFrame básico
-            chart_data = pd.DataFrame({
-                "Resultado": ["Greens ✅", "Reds ❌"],
-                "Total": [greens, reds]
-            })
-
-            # 2. Adiciona a coluna de cores
-            cores_map = {"Greens ✅": "#00A67E", "Reds ❌": "#FF4B4B"}
-            chart_data['Cor'] = chart_data['Resultado'].map(cores_map)
-
-            st.subheader("Desempenho Visual")
-
-            # 3. Chama o bar_chart com a coluna de Cores
-            st.bar_chart(
-                chart_data,
-                x="Resultado",
-                y="Total",
-                color="Cor"  # <--- CORREÇÃO: Usa a coluna 'Cor'
-                # (Removemos o argumento 'color_map' que não existe)
-            )
-        # --- FIM DO CÓDIGO CORRIGIDO ---
 
         st.divider() # Linha horizontal
         
@@ -689,5 +645,6 @@ with tab_historico:
                 if col_b2.button("Marcar como Red ❌", use_container_width=True):
                     indice_real_df = int(analise_selecionada.split(':')[0])
                     atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+
 
 
