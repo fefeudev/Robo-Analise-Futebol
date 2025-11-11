@@ -615,30 +615,31 @@ with tab_historico:
         col_m2.metric("Reds ❌", f"{reds}")
         col_m3.metric("Assertividade", f"{assertividade:.1f}%")
 
-        # --- INÍCIO DA MELHORIA 1 (GRÁFICO DE BARRAS) ---
+        # --- INÍCIO DO CÓDIGO CORRIGIDO ---
         if total_analises > 0:
-            # Cria um DataFrame (mini-tabela) para o gráfico
+            # 1. Cria o DataFrame básico
             chart_data = pd.DataFrame({
                 "Resultado": ["Greens ✅", "Reds ❌"],
                 "Total": [greens, reds]
             })
 
-            st.subheader("Desempenho Visual")
-            # Define as cores
-            cores = {"Greens ✅": "#00A67E", "Reds ❌": "#FF4B4B"}
+            # 2. Adiciona a coluna de cores
+            cores_map = {"Greens ✅": "#00A67E", "Reds ❌": "#FF4B4B"}
+            chart_data['Cor'] = chart_data['Resultado'].map(cores_map)
 
+            st.subheader("Desempenho Visual")
+
+            # 3. Chama o bar_chart com a coluna de Cores
             st.bar_chart(
                 chart_data,
                 x="Resultado",
                 y="Total",
-                color="Resultado", # Usa a coluna Resultado para definir a cor
-                color_map=cores # Aplica nosso mapa de cores
+                color="Cor"  # <--- CORREÇÃO: Usa a coluna 'Cor'
+                # (Removemos o argumento 'color_map' que não existe)
             )
-        # --- FIM DA MELHORIA ---
+        # --- FIM DO CÓDIGO CORRIGIDO ---
 
         st.divider() # Linha horizontal
-
-        # (O resto da aba continua aqui...)
         
         # (Correção para planilha vazia)
         if df_historico_db.empty:
@@ -688,4 +689,5 @@ with tab_historico:
                 if col_b2.button("Marcar como Red ❌", use_container_width=True):
                     indice_real_df = int(analise_selecionada.split(':')[0])
                     atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+
 
