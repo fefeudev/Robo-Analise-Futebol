@@ -816,8 +816,7 @@ with tab_historico:
             # st.subheader("Atualizar Status")
             # ...
             # ...
-            
-}
+        
 
 ### MELHORIA 7 - INÍCIO (Nova Aba: Analisar Times) ###
 with tab_times:
@@ -862,3 +861,4 @@ with tab_times:
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
 ### MELHORIA 7 - FIM ###
+
