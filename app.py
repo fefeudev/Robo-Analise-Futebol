@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.4 - Formulário Consolidado)
-# UPGRADE: Removidas as abas do formulário de odds (Melhoria 1)
+# O Robô de Análise (Versão 7.5 - Filtros no Histórico)
+# UPGRADE: Adicionados filtros interativos (multiselect) na aba Histórico.
 
 import streamlit as st
 import requests
@@ -328,7 +328,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.4 - Formulário Consolidado") # Versão atualizada
+    st.caption("v7.5 - Filtros no Histórico") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -774,17 +774,55 @@ with tab_historico:
             ### MELHORIA 2 - FIM ###
             
             # 3. Mostra a tabela de dados
-            st.subheader("Últimas Análises")
             
-            if st.checkbox("Mostrar apenas análises 'Aguardando'"):
-                if 'Status' in df_historico_db.columns:
-                    df_para_mostrar = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳'].iloc[::-1]
+            ### MELHORIA 2 (DESIGN) / 4 (FUNC) - INÍCIO (Filtros Interativos) ###
+            st.subheader("🔎 Filtrar Histórico")
+            df_para_mostrar = df_historico_db.copy() # Copia o dataframe original
+
+            # Garante que as colunas existem antes de tentar filtrar
+            colunas_presentes = df_para_mostrar.columns
+            
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1:
+                if 'Liga' in colunas_presentes:
+                    ligas_selecionadas = st.multiselect(
+                        "Filtrar por Liga:",
+                        options=df_para_mostrar['Liga'].unique(),
+                        default=[]
+                    )
+                    if ligas_selecionadas:
+                        df_para_mostrar = df_para_mostrar[df_para_mostrar['Liga'].isin(ligas_selecionadas)]
                 else:
-                    df_para_mostrar = df_historico_db.iloc[::-1]
-            else:
-                df_para_mostrar = df_historico_db.iloc[::-1] 
+                    st.caption("Coluna 'Liga' não encontrada.")
             
-            st.dataframe(df_para_mostrar, use_container_width=True)
+            with col_f2:
+                if 'Mercado' in colunas_presentes:
+                    mercados_selecionados = st.multiselect(
+                        "Filtrar por Mercado:",
+                        options=df_para_mostrar['Mercado'].unique(),
+                        default=[]
+                    )
+                    if mercados_selecionados:
+                        df_para_mostrar = df_para_mostrar[df_para_mostrar['Mercado'].isin(mercados_selecionados)]
+                else:
+                    st.caption("Coluna 'Mercado' não encontrada.")
+
+            with col_f3:
+                if 'Status' in colunas_presentes:
+                    status_selecionados = st.multiselect(
+                        "Filtrar por Status:",
+                        options=df_para_mostrar['Status'].unique(),
+                        default=[]
+                    )
+                    if status_selecionados:
+                        df_para_mostrar = df_para_mostrar[df_para_mostrar['Status'].isin(status_selecionados)]
+                else:
+                    st.caption("Coluna 'Status' não encontrada.")
+
+            st.subheader("Últimas Análises (Filtrado)")
+            # Removemos o st.checkbox antigo
+            st.dataframe(df_para_mostrar.iloc[::-1], use_container_width=True)
+            ### MELHORIA 2 (DESIGN) / 4 (FUNC) - FIM ###
 
 
 ### MELHORIA 7 (A, B, C) - INÍCIO (Nova Aba: Analisar Times) ###
