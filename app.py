@@ -598,24 +598,47 @@ with tab_analise:
 with tab_historico:
     st.header("📈 Histórico de Assertividade")
     st.caption("Aqui fica o registro de todas as análises enviadas ao Telegram.")
-    
+
     if db_sheet is None:
         st.error("Não foi possível conectar ao Google Sheets. Verifique seus 'Secrets'.")
     else:
         # 1. Carrega os dados da planilha
         df_historico_db, greens, reds = carregar_historico_do_banco(db_sheet)
-        
+
         # 2. Mostra os Contadores (Métricas)
         st.subheader("Desempenho Geral")
         total_analises = greens + reds
         assertividade = (greens / total_analises * 100) if total_analises > 0 else 0
-        
+
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("Greens ✅", f"{greens}")
         col_m2.metric("Reds ❌", f"{reds}")
         col_m3.metric("Assertividade", f"{assertividade:.1f}%")
-        
+
+        # --- INÍCIO DA MELHORIA 1 (GRÁFICO DE BARRAS) ---
+        if total_analises > 0:
+            # Cria um DataFrame (mini-tabela) para o gráfico
+            chart_data = pd.DataFrame({
+                "Resultado": ["Greens ✅", "Reds ❌"],
+                "Total": [greens, reds]
+            })
+
+            st.subheader("Desempenho Visual")
+            # Define as cores
+            cores = {"Greens ✅": "#00A67E", "Reds ❌": "#FF4B4B"}
+
+            st.bar_chart(
+                chart_data,
+                x="Resultado",
+                y="Total",
+                color="Resultado", # Usa a coluna Resultado para definir a cor
+                color_map=cores # Aplica nosso mapa de cores
+            )
+        # --- FIM DA MELHORIA ---
+
         st.divider() # Linha horizontal
+
+        # (O resto da aba continua aqui...)
         
         # (Correção para planilha vazia)
         if df_historico_db.empty:
@@ -665,3 +688,4 @@ with tab_historico:
                 if col_b2.button("Marcar como Red ❌", use_container_width=True):
                     indice_real_df = int(analise_selecionada.split(':')[0])
                     atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+
