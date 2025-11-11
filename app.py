@@ -690,6 +690,41 @@ with tab_historico:
             st.info("Nenhuma análise foi salva no banco de dados ainda. Faça sua primeira análise!")
         else:
             
+            ### MELHORIA 5 - INÍCIO (Mover Atualização de Status para o Topo) ###
+            with st.expander("✏️ Atualizar Status de Análises Pendentes"):
+                # st.subheader("Atualizar Status") # O título do expander já é suficiente
+            
+                if 'Status' in df_historico_db.columns:
+                    opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
+                else:
+                    opcoes_para_atualizar_df = pd.DataFrame(columns=df_historico_db.columns) # Cria um DF vazio
+
+            
+                opcoes_para_atualizar_lista = [
+                    f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
+                    for idx, row in opcoes_para_atualizar_df.iterrows()
+                ]
+            
+                if not opcoes_para_atualizar_lista:
+                    st.info("Nenhuma análise 'Aguardando' para atualizar.")
+                else:
+                    analise_selecionada = st.selectbox(
+                        "Selecione a análise para atualizar:",
+                        opcoes_para_atualizar_lista,
+                        key="select_analise_atualizar" # Adiciona key para evitar erros de widget
+                    )
+                
+                    col_b1, col_b2 = st.columns(2)
+                
+                    if col_b1.button("Marcar como Green ✅", use_container_width=True, key="btn_green"):
+                        indice_real_df = int(analise_selecionada.split(':')[0])
+                        atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
+                    
+                    if col_b2.button("Marcar como Red ❌", use_container_width=True, key="btn_red"):
+                        indice_real_df = int(analise_selecionada.split(':')[0])
+                        atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+            ### MELHORIA 5 - FIM ###
+
             ### MELHORIA 2 - INÍCIO (Gráficos de Desempenho) ###
             
             # Filtra apenas por Green/Red para os gráficos
@@ -741,33 +776,9 @@ with tab_historico:
             st.dataframe(df_para_mostrar, use_container_width=True)
             
             # 4. Lógica para Marcar Green/Red
-            st.subheader("Atualizar Status")
+            # ### ESTE BLOCO FOI MOVIDO PARA CIMA, DENTRO DO st.expander ###
+            # st.subheader("Atualizar Status")
+            # ...
+            # ...
             
-            if 'Status' in df_historico_db.columns:
-                opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
-            else:
-                opcoes_para_atualizar_df = pd.DataFrame(columns=df_historico_db.columns) # Cria um DF vazio
-
-            
-            opcoes_para_atualizar_lista = [
-                f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
-                for idx, row in opcoes_para_atualizar_df.iterrows()
-            ]
-            
-            if not opcoes_para_atualizar_lista:
-                st.info("Nenhuma análise 'Aguardando' para atualizar.")
-            else:
-                analise_selecionada = st.selectbox(
-                    "Selecione a análise para atualizar:",
-                    opcoes_para_atualizar_lista
-                )
-                
-                col_b1, col_b2 = st.columns(2)
-                
-                if col_b1.button("Marcar como Green ✅", use_container_width=True, key="btn_green"):
-                    indice_real_df = int(analise_selecionada.split(':')[0])
-                    atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
-                    
-                if col_b2.button("Marcar como Red ❌", use_container_width=True, key="btn_red"):
-                    indice_real_df = int(analise_selecionada.split(':')[0])
-                    atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+}
