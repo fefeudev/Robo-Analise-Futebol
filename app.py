@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 6.9 - Melhorias de UX)
-# UPGRADE: Adicionado xG na lista de jogos e gráficos de desempenho no histórico.
+# O Robô de Análise (Versão 7.0 - Ranking de Times)
+# UPGRADE: Adicionada Melhoria A (Ranking da Liga) na aba "Analisar Times".
 
 import streamlit as st
 import requests
@@ -20,7 +20,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="Robô de Valor (BD)",
-    page_icon="🤖", # Emoji atualizado
+    page_icon="🤖", 
     layout="wide"
 )
 
@@ -43,7 +43,6 @@ def fazer_requisicao_api(endpoint, params):
 
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
-    # (Função idêntica)
     try:
         creds_dict = dict(st.secrets.google_creds)
         scope = [
@@ -60,7 +59,6 @@ def conectar_ao_banco_de_dados():
         return None
 
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
-    # (Função idêntica, salva números puros)
     try:
         odd_num = float(odd)
         prob_robo_num = float(prob_robo) / 100.0
@@ -78,13 +76,11 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
 
 @st.cache_data(ttl=60) 
 def carregar_historico_do_banco(_sheet):
-    # (Função idêntica)
     try:
         dados = _sheet.get_all_records() 
         df = pd.DataFrame(dados)
         
         if not df.empty:
-            # Garante que a coluna Status exista antes de contar
             if 'Status' in df.columns:
                 contagem_status = df['Status'].value_counts()
                 greens = contagem_status.get('Green ✅', 0)
@@ -100,7 +96,6 @@ def carregar_historico_do_banco(_sheet):
         return pd.DataFrame(), 0, 0
 
 def atualizar_status_no_banco(sheet, row_index, novo_status):
-    # (Função idêntica)
     try:
         sheet.update_cell(row_index + 2, 8, novo_status) # Coluna H
         st.cache_data.clear() 
@@ -109,7 +104,6 @@ def atualizar_status_no_banco(sheet, row_index, novo_status):
         st.error(f"Erro ao atualizar status: {e}")
 
 # --- ETAPA 1 (CÉREBRO HÍBRIDO) ---
-# (Todas as funções do Cérebro (Dixon-Coles e Poisson) são idênticas)
 @st.cache_data
 def carregar_cerebro_dixon_coles(id_liga):
     nome_arquivo = f"dc_params_{id_liga}.json"
@@ -124,7 +118,6 @@ def carregar_cerebro_dixon_coles(id_liga):
         return None
 
 def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
-    # (Função idêntica)
     try:
         forcas = dados_cerebro['forcas']
         vantagem_casa = dados_cerebro['vantagem_casa']
@@ -167,12 +160,10 @@ def prever_jogo_dixon_coles(dados_cerebro, time_casa, time_visitante):
         'btts_sim': prob_btts_sim / soma_total_probs, 'chance_dupla_1X': prob_dc_1x / soma_total_probs,
         'chance_dupla_X2': prob_dc_x2 / soma_total_probs, 'chance_dupla_12': prob_dc_12 / soma_total_probs,
     }
-    # Retorna as probabilidades E a tupla de xG (lambda_casa, mu_visitante)
     return (probabilidades_mercado, (lambda_casa, mu_visitante))
 
 @st.cache_data 
 def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
-    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"season": str(temporada), "status": "FINISHED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -203,7 +194,6 @@ def carregar_e_treinar_cerebro_poisson(id_liga, temporada):
     return df_liga, medias_liga
 
 def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, data_do_jogo, num_jogos=6):
-    # (Função idêntica)
     data_do_jogo_dt = pd.to_datetime(data_do_jogo)
     df_passado = df_historico[df_historico['data_jogo'] < data_do_jogo_dt]
     jogos_casa_recente = df_passado[df_passado['TimeCasa'] == time_casa].tail(num_jogos)
@@ -222,7 +212,6 @@ def calcular_forcas_recente_poisson(df_historico, time_casa, time_visitante, dat
     return forcas_times
 
 def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
-    # (Função idêntica)
     forca_ataque_casa = forcas_times[time_casa]['ataque_casa_media'] / medias_liga['media_gols_casa']
     forca_defesa_casa = forcas_times[time_casa]['defesa_casa_media'] / medias_liga['media_gols_visitante']
     forca_ataque_visitante = forcas_times[time_visitante]['ataque_visitante_media'] / medias_liga['media_gols_visitante']
@@ -253,11 +242,9 @@ def prever_jogo_poisson(forcas_times, medias_liga, time_casa, time_visitante):
         'btts_sim': prob_btts_sim / soma_total_probs, 'chance_dupla_1X': prob_dc_1x / soma_total_probs,
         'chance_dupla_X2': prob_dc_x2 / soma_total_probs, 'chance_dupla_12': prob_dc_12 / soma_total_probs,
     }
-    # Retorna as probabilidades E a tupla de xG (xg_casa, xg_visitante)
     return (probabilidades_mercado, (xg_casa, xg_visitante))
 
 def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.60, filtro_valor_minimo=0.05):
-    # (Função idêntica)
     oportunidades = {}
     for mercado, odd in odds_casa.items():
         if odd is None or odd == 0.0 or mercado not in probabilidades_calculadas:
@@ -278,7 +265,6 @@ def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.6
 
 @st.cache_data
 def buscar_jogos_por_data(id_liga, data_str):
-    # (Função idêntica)
     endpoint = f"competitions/{id_liga}/matches"
     params = {"dateFrom": data_str, "dateTo": data_str, "status": "SCHEDULED"}
     dados = fazer_requisicao_api(endpoint, params)
@@ -295,7 +281,6 @@ def buscar_jogos_por_data(id_liga, data_str):
     return jogos_do_dia
 
 def enviar_mensagem_telegram(mensagem):
-    # (Função idêntica)
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
         st.warning("Token do Telegram não configurado. Pulando envio.")
         return
@@ -342,9 +327,8 @@ nomes_mercado = {
 
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
-    # Adicionando um logo ou título de destaque
     st.title("🤖 Robô de Valor")
-    st.caption("v6.9 - Híbrido")
+    st.caption("v7.0 - Híbrido com Ranking")
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -389,7 +373,6 @@ with st.sidebar:
         help="Se LIGADO, mostra a probabilidade para todos os 8 mercados, mesmo que não tenham valor."
     )
     
-    # Adicionando um Expander "Sobre"
     with st.expander("ℹ️ Sobre este Robô"):
         st.markdown("""
             Este robô usa um **Cérebro Híbrido** para encontrar valor:
@@ -408,7 +391,6 @@ st.title("Painel de Análise de Valor (Híbrido) 💾")
 db_sheet = conectar_ao_banco_de_dados()
 
 # --- TREINA O CÉREBRO (MOVIDO PARA FORA DAS ABAS) ---
-# Isso garante que o cérebro seja carregado uma vez, não importa qual aba está ativa.
 MODO_CEREBRO = "FALHA" 
 dados_cerebro_dc = None
 df_historico_poisson = None
@@ -428,8 +410,7 @@ else:
 # --- FIM DO BLOCO MOVIDO ---
 
 
-# Cria as duas abas principais
-### MELHORIA 7 - Adicionando a aba "Analisar Times" ###
+# Cria as três abas principais
 tab_analise, tab_historico, tab_times = st.tabs([
     "📊 Analisar Jogos", 
     "📈 Histórico de Assertividade",
@@ -439,7 +420,6 @@ tab_analise, tab_historico, tab_times = st.tabs([
 # --- ABA 1: ANALISAR JOGOS ---
 with tab_analise:
     
-    # --- Mostra o status do Cérebro (a lógica foi movida para cima) ---
     emoji_liga_selecionada = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
     st.subheader(f"Liga Selecionada: {emoji_liga_selecionada} {liga_selecionada_nome}")
     
@@ -472,30 +452,33 @@ with tab_analise:
                 
                 for i, jogo in enumerate(jogos_do_dia):
                     
-                    # 1. Tenta calcular o xG antecipadamente
                     xg_tupla = None
                     try:
                         if MODO_CEREBRO == "DIXON_COLES":
-                            _, xg_tupla = prever_jogo_dixon_coles(dados_cerebro_dc, jogo['time_casa'], jogo['time_visitante'])
+                            resultado_previsao = prever_jogo_dixon_coles(
+                                dados_cerebro_dc, jogo['time_casa'], jogo['time_visitante']
+                            )
+                            if resultado_previsao:
+                                _, xg_tupla = resultado_previsao
                         
                         elif MODO_CEREBRO == "POISSON_RECENTE":
                             forcas_times = calcular_forcas_recente_poisson(
                                 df_historico_poisson, jogo['time_casa'], jogo['time_visitante'], jogo['data_jogo']
                             )
                             if forcas_times:
-                                _, xg_tupla = prever_jogo_poisson(
+                                resultado_previsao = prever_jogo_poisson(
                                     forcas_times, medias_liga_poisson,
                                     jogo['time_casa'], jogo['time_visitante'] 
                                 )
+                                if resultado_previsao:
+                                    _, xg_tupla = resultado_previsao
                     except Exception as e:
-                        # Ignora erros silenciosamente (provavelmente time novo não encontrado)
-                        pass 
-                    
-                    # 2. Cria o layout em colunas
-                    col_btn, col_xg = st.columns([3, 1])
-                    
-                    with col_btn:
-                        # Callback para selecionar o jogo
+                        # Falha silenciosa para não quebrar a lista
+                        print(f"Erro ao calcular xG para a lista: {e}")
+
+                    col1, col2 = st.columns([3, 1])
+
+                    with col1:
                         def selecionar_jogo(jogo_clicado=jogo, indice=i):
                             st.session_state.jogo_selecionado = jogo_clicado
                             st.session_state.jogo_indice = indice
@@ -507,17 +490,14 @@ with tab_analise:
                             key=f"btn_jogo_{i}"
                         )
                     
-                    with col_xg:
-                        # 3. Mostra a métrica de xG
+                    with col2:
                         if xg_tupla:
                             st.metric(label="xG Previsto", 
                                       value=f"{xg_tupla[0]:.2f} - {xg_tupla[1]:.2f}",
-                                      delta=MODO_CEREBRO.split('_')[0], 
+                                      delta=f"{MODO_CEREBRO.split('_')[0]}", 
                                       delta_color="off")
                         else:
-                            # Se falhou (time novo?), mostra um aviso
-                            st.caption("Cérebro (N/A)")
-                
+                            st.button("Analisar", on_click=selecionar_jogo, key=f"btn_analisar_basic_{i}", use_container_width=True)
                 ### MELHORIA 1 - FIM ###
     
     # Se 'jogo_selecionado' ESTÁ na memória, mostra a "Tela 2" (Análise)
@@ -533,8 +513,6 @@ with tab_analise:
         with st.form(key=f"form_jogo_{i}"):
             st.header(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}")
             
-            # NOTA: Mantendo as abas conforme o código original,
-            # pois a "Melhoria 3" (consolidar formulário) não foi solicitada.
             tab_1x2, tab_dc, tab_gols = st.tabs(["📊 Resultado (1x2)", "🤝 Chance Dupla", "⚽ Gols"])
             with tab_1x2:
                 st.write("**Mercado 1X2**")
@@ -573,9 +551,20 @@ with tab_analise:
                         )
                         if resultado_previsao:
                             probs_robo, xg_tupla = resultado_previsao
+                    elif MODO_CEREBRO == "POISSON_RECENTE":
+                        forcas_times = calcular_forcas_recente_poisson(
+                            df_historico_poisson, jogo['time_casa'], jogo['time_visitante'], jogo['data_jogo']
+                        )
+                        if forcas_times:
+                            resultado_previsao = prever_jogo_poisson(
+                                forcas_times, medias_liga_poisson,
+                                jogo['time_casa'], jogo['time_visitante'] 
+                            )
+                            if resultado_previsao:
+                                probs_robo, xg_tupla = resultado_previsao
                     
                     if probs_robo:
-
+                        
                         ### MELHORIA 9 - INÍCIO (Termômetro de Tendência) ###
                         st.subheader("🌡️ Termômetro do Cérebro")
                         col_t1, col_t2 = st.columns(2)
@@ -607,7 +596,7 @@ with tab_analise:
                                 
                         st.divider()
                         ### MELHORIA 9 - FIM ###
-
+                        
                         oportunidades = encontrar_valor(
                             probs_robo, odds_manuais, 
                             filtro_prob_minima, filtro_valor_minimo
@@ -711,91 +700,73 @@ with tab_historico:
         total_analises = greens + reds
         assertividade = (greens / total_analises * 100) if total_analises > 0 else 0
         
-        # Define a cor da assertividade
-        assertividade_color = "normal" if assertividade >= 50 else "inverse"
-        
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("Greens ✅", f"{greens}")
         col_m2.metric("Reds ❌", f"{reds}")
-        col_m3.metric("Assertividade", f"{assertividade:.1f}%", delta_color=assertividade_color)
+        col_m3.metric("Assertividade", f"{assertividade:.1f}%")
         
         st.divider() # Linha horizontal
+        
+        ### MELHORIA 5 - INÍCIO (Mover "Atualizar Status" para cima) ###
+        with st.expander("✏️ Atualizar Status de Análises Pendentes"):
+            if 'Status' in df_historico_db.columns:
+                opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
+            else:
+                opcoes_para_atualizar_df = pd.DataFrame(columns=df_historico_db.columns) # Cria um DF vazio
+
+            opcoes_para_atualizar_lista = [
+                f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
+                for idx, row in opcoes_para_atualizar_df.iterrows()
+            ]
+            
+            if not opcoes_para_atualizar_lista:
+                st.info("Nenhuma análise 'Aguardando' para atualizar.")
+            else:
+                analise_selecionada = st.selectbox(
+                    "Selecione a análise para atualizar:",
+                    opcoes_para_atualizar_lista,
+                    key="select_analise_status"
+                )
+                
+                col_b1, col_b2 = st.columns(2)
+                
+                if col_b1.button("Marcar como Green ✅", use_container_width=True, key="btn_green"):
+                    if analise_selecionada: # Verifica se algo foi selecionado
+                        indice_real_df = int(analise_selecionada.split(':')[0])
+                        atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
+                    
+                if col_b2.button("Marcar como Red ❌", use_container_width=True, key="btn_red"):
+                    if analise_seleciona_da: # Verifica se algo foi selecionado
+                        indice_real_df = int(analise_selecionada.split(':')[0])
+                        atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+        ### MELHORIA 5 - FIM ###
         
         # (Correção para planilha vazia)
         if df_historico_db.empty:
             st.info("Nenhuma análise foi salva no banco de dados ainda. Faça sua primeira análise!")
         else:
+            ### MELHORIA 2 - INÍCIO (Gráficos de Desempenho Lado a Lado) ###
+            st.subheader("Desempenho Detalhado")
             
-            ### MELHORIA 5 - INÍCIO (Mover Atualização de Status para o Topo) ###
-            with st.expander("✏️ Atualizar Status de Análises Pendentes"):
-                # st.subheader("Atualizar Status") # O título do expander já é suficiente
+            # Filtra apenas por Green/Red
+            df_resultados = df_historico_db[df_historico_db['Status'].isin(['Green ✅', 'Red ❌'])]
             
-                if 'Status' in df_historico_db.columns:
-                    opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
-                else:
-                    opcoes_para_atualizar_df = pd.DataFrame(columns=df_historico_db.columns) # Cria um DF vazio
-
-            
-                opcoes_para_atualizar_lista = [
-                    f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
-                    for idx, row in opcoes_para_atualizar_df.iterrows()
-                ]
-            
-                if not opcoes_para_atualizar_lista:
-                    st.info("Nenhuma análise 'Aguardando' para atualizar.")
-                else:
-                    analise_selecionada = st.selectbox(
-                        "Selecione a análise para atualizar:",
-                        opcoes_para_atualizar_lista,
-                        key="select_analise_atualizar" # Adiciona key para evitar erros de widget
-                    )
-                
-                    col_b1, col_b2 = st.columns(2)
-                
-                    if col_b1.button("Marcar como Green ✅", use_container_width=True, key="btn_green"):
-                        indice_real_df = int(analise_selecionada.split(':')[0])
-                        atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
-                    
-                    if col_b2.button("Marcar como Red ❌", use_container_width=True, key="btn_red"):
-                        indice_real_df = int(analise_selecionada.split(':')[0])
-                        atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
-            ### MELHORIA 5 - FIM ###
-
-            ### MELHORIA 2 - INÍCIO (Gráficos de Desempenho) ###
-            
-            # Filtra apenas por Green/Red para os gráficos
-            if 'Status' in df_historico_db.columns:
-                df_resultados = df_historico_db[df_historico_db['Status'].isin(['Green ✅', 'Red ❌'])]
+            if df_resultados.empty:
+                st.info("Nenhum Green ou Red registrado para gerar gráficos.")
             else:
-                df_resultados = pd.DataFrame() # Cria um DF vazio se a coluna não existir
+                col_graf1, col_graf2 = st.columns(2)
+                
+                with col_graf1:
+                    st.markdown("**Por Mercado**")
+                    desempenho_mercado = df_resultados.groupby('Mercado')['Status'].value_counts().unstack(fill_value=0)
+                    st.bar_chart(desempenho_mercado, color=["#008000", "#FF4B4B"]) # Verde, Vermelho
 
-            if not df_resultados.empty:
-                try:
-                    # ### ALTERAÇÃO SOLICITADA: Criar colunas para os gráficos ###
-                    col_graf1, col_graf2 = st.columns(2)
-                    
-                    with col_graf1:
-                        # Gráfico 1: Desempenho por Mercado
-                        st.subheader("📊 Desempenho por Mercado")
-                        desempenho_mercado = df_resultados.groupby('Mercado')['Status'].value_counts().unstack(fill_value=0)
-                        # Garante a ordem das colunas para as cores
-                        if 'Green ✅' not in desempenho_mercado: desempenho_mercado['Green ✅'] = 0
-                        if 'Red ❌' not in desempenho_mercado: desempenho_mercado['Red ❌'] = 0
-                        st.bar_chart(desempenho_mercado[['Green ✅', 'Red ❌']], color=["#008000", "#FF4B4B"])
-
-                    with col_graf2:
-                        # Gráfico 2: Desempenho por Liga
-                        st.subheader("📈 Desempenho por Liga")
-                        desempenho_liga = df_resultados.groupby('Liga')['Status'].value_counts().unstack(fill_value=0)
-                        if 'Green ✅' not in desempenho_liga: desempenho_liga['Green ✅'] = 0
-                        if 'Red ❌' not in desempenho_liga: desempenho_liga['Red ❌'] = 0
-                        st.bar_chart(desempenho_liga[['Green ✅', 'Red ❌']], color=["#008000", "#FF4B4B"])
-
-                except Exception as e:
-                    st.error(f"Erro ao gerar gráficos: {e}")
+                with col_graf2:
+                    st.markdown("**Por Liga**")
+                    desempenho_liga = df_resultados.groupby('Liga')['Status'].value_counts().unstack(fill_value=0)
+                    st.bar_chart(desempenho_liga, color=["#008000", "#FF4B4B"]) # Verde, Vermelho
             
             st.divider() # Linha horizontal
-            
             ### MELHORIA 2 - FIM ###
             
             # 3. Mostra a tabela de dados
@@ -810,50 +781,75 @@ with tab_historico:
                 df_para_mostrar = df_historico_db.iloc[::-1] 
             
             st.dataframe(df_para_mostrar, use_container_width=True)
-            
-            # 4. Lógica para Marcar Green/Red
-            # ### ESTE BLOCO FOI MOVIDO PARA CIMA, DENTRO DO st.expander ###
-            # st.subheader("Atualizar Status")
-            # ...
-            # ...
-        
+
 
 ### MELHORIA 7 - INÍCIO (Nova Aba: Analisar Times) ###
 with tab_times:
     st.header("🔎 Dashboard de Análise de Times")
-    st.caption("Veja as forças de Ataque e Defesa calculadas pelo Cérebro Dixon-Coles.")
-
+    
     # Pega o emoji da liga que já foi selecionada na sidebar
     emoji_liga_selecionada = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
 
     # Verifica se o cérebro DC foi carregado com sucesso (variáveis agora são "globais" para as abas)
     if MODO_CEREBRO == "DIXON_COLES" and dados_cerebro_dc:
-        st.subheader(f"Forças dos Times - {emoji_liga_selecionada} {liga_selecionada_nome}")
+        st.subheader(f"Ranking de Forças (DC) - {emoji_liga_selecionada} {liga_selecionada_nome}")
         
-        # Pega a lista de times do cérebro e ordena
+        ### MELHORIA A - INÍCIO (Ranking da Liga) ###
         try:
-            times_da_liga = sorted(list(dados_cerebro_dc['forcas'].keys()))
-            time_selecionado = st.selectbox(
-                "Selecione um time para analisar:",
-                times_da_liga,
-                key="select_time_dashboard",
-                index=None, # Começa sem time selecionado
-                placeholder="Escolha um time..."
-            )
+            lista_forcas = []
+            # 1. Loop para extrair dados
+            for time, forcas in dados_cerebro_dc['forcas'].items():
+                lista_forcas.append({
+                    'Time': time,
+                    'Ataque': forcas['ataque'],
+                    'Defesa': forcas['defesa']
+                })
 
-            if time_selecionado:
-                # Pega as estatísticas e exibe
-                forcas = dados_cerebro_dc['forcas'][time_selecionado]
-                col1, col2 = st.columns(2)
-                col1.metric("Força de Ataque (DC)", 
-                             f"{forcas['ataque']:.3f}", 
-                             help="Valor da força de ataque do time. Positivo é bom.")
-                col2.metric("Força de Defesa (DC)", 
-                             f"{forcas['defesa']:.3f}", 
-                             help="Valor da força de defesa. Negativo é bom (sofre menos gols).",
-                             delta_color="inverse") # Negativo é bom
+            # 2. Converter para DataFrame
+            if not lista_forcas:
+                st.warning("Nenhum time encontrado nos dados do cérebro.")
+            else:
+                df_liga = pd.DataFrame(lista_forcas)
+                
+                # 3. Criar "Força Geral" (Ataque alto é bom, Defesa baixa (negativa) é bom)
+                df_liga['Força Geral'] = df_liga['Ataque'] - df_liga['Defesa']
+                
+                # 4. Exibir o DataFrame formatado
+                st.info("Clique no título de uma coluna para ordenar. 'Força Geral' é a melhor métrica de ranking.")
+                
+                # Ordena por padrão pela Força Geral
+                df_liga = df_liga.sort_values(by="Força Geral", ascending=False)
+                
+                st.dataframe(
+                    df_liga.style.format({
+                        'Ataque': '{:.3f}',
+                        'Defesa': '{:.3f}',
+                        'Força Geral': '{:.3f}'
+                    }),
+                    column_config={
+                        "Time": "Time",
+                        "Ataque": st.column_config.NumberColumn(
+                            "Força de Ataque (DC)", 
+                            help="Mais alto = melhor ataque"
+                        ),
+                        "Defesa": st.column_config.NumberColumn(
+                            "Força de Defesa (DC)", 
+                            help="Mais baixo (mais negativo) = melhor defesa"
+                        ),
+                        "Força Geral": st.column_config.ProgressColumn(
+                            "Força Geral (Ataque - Defesa)", 
+                            help="Métrica combinada. Mais alto = melhor time.",
+                            min_val=float(df_liga['Força Geral'].min()),
+                            max_val=float(df_liga['Força Geral'].max())
+                        )
+                    },
+                    use_container_width=True,
+                    hide_index=True # Esconde o índice (0, 1, 2...)
+                )
+        
         except Exception as e:
-            st.error(f"Erro ao processar o cérebro DC: {e}")
+            st.error(f"Erro ao processar o ranking do cérebro DC: {e}")
+        ### MELHORIA A - FIM ###
     
     elif MODO_CEREBRO == "POISSON_RECENTE":
         st.info("O Dashboard de Times só está disponível para ligas com um Cérebro Dixon-Coles (DC) pré-treinado.")
@@ -861,4 +857,3 @@ with tab_times:
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
 ### MELHORIA 7 - FIM ###
-
