@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.7 - Correção de Bug do Gráfico)
-# UPGRADE: Corrigido o StreamlitColorLengthError nos gráficos de barra.
+# O Robô de Análise (Versão 7.8 - Correção de Formato de Tabela)
+# UPGRADE: Corrigida a leitura de dados do Google Sheets e formatada a tabela.
 
 import streamlit as st
 import requests
@@ -155,11 +155,36 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
     except Exception as e:
         st.error(f"Erro ao salvar no Google Sheets: {e}")
 
+### CORREÇÃO v7.8 - MUDANÇA NA LEITURA DE DADOS ###
 @st.cache_data(ttl=60) 
 def carregar_historico_do_banco(_sheet):
     try:
-        dados = _sheet.get_all_records() 
-        df = pd.DataFrame(dados)
+        ### CORREÇÃO DE LEITURA DE DADOS - INÍCIO ###
+        # Usar get_all_values() é mais robusto que get_all_records()
+        lista_de_listas = _sheet.get_all_values()
+        if len(lista_de_listas) < 2: # Se não tiver nem header e 1 linha
+            return pd.DataFrame(), 0, 0
+
+        header = lista_de_listas[0]
+        dados = lista_de_listas[1:]
+        
+        # Define os nomes das colunas ao criar o DataFrame
+        df = pd.DataFrame(dados, columns=header)
+        
+        # Colunas que esperamos que sejam numéricas
+        colunas_para_converter = ['Odd', 'Probabilidade', 'Valor']
+        
+        for col in colunas_para_converter:
+            if col in df.columns:
+                # Converte para numérico, forçando erros a virarem 'NaN' (Not a Number)
+                # Substitui vírgulas por pontos, caso o Google Sheets esteja em local BR/PT
+                if df[col].dtype == 'object':
+                     df[col] = df[col].str.replace(',', '.', regex=False)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+        # Remove linhas onde a conversão para número falhou (se houver)
+        df = df.dropna(subset=colunas_para_converter)
+        ### CORREÇÃO DE LEITURA DE DADOS - FIM ###
         
         if not df.empty:
             if 'Status' in df.columns:
@@ -175,6 +200,7 @@ def carregar_historico_do_banco(_sheet):
     except Exception as e:
         st.error(f"Erro ao carregar o histórico: {e}")
         return pd.DataFrame(), 0, 0
+### FIM DA CORREÇÃO v7.8 ###
 
 def atualizar_status_no_banco(sheet, row_index, novo_status):
     try:
@@ -409,7 +435,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.7 - Correção de Bug") # Versão atualizada
+    st.caption("v7.8 - Correção Tabela") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -921,8 +947,41 @@ with tab_historico:
                     st.caption("Coluna 'Status' não encontrada.")
 
             st.subheader("Últimas Análises (Filtrado)")
-            # Removemos o st.checkbox antigo
-            st.dataframe(df_para_mostrar.iloc[::-1], use_container_width=True)
+            
+            ### CORREÇÃO v7.8 - FORMATAÇÃO DA TABELA ###
+            # Define a configuração das colunas para formatação
+            config_colunas = {
+                "Data": st.column_config.TextColumn("Data"),
+                "Liga": st.column_config.TextColumn("Liga"),
+                "Jogo": st.column_config.TextColumn("Jogo", width="large"),
+                "Mercado": st.column_config.TextColumn("Mercado"),
+                "Odd": st.column_config.NumberColumn(
+                    "Odd",
+                    format="%.2f" # ex: 1.35
+                ),
+                "Probabilidade": st.column_config.ProgressColumn(
+                    "Probabilidade",
+                    format="%.1f%%", # ex: 81.6%
+                    min_value=0.0,
+                    max_value=1.0 # Probabilidade vem como 0.81
+                ),
+                "Valor": st.column_config.ProgressColumn(
+                    "Valor (EV+)",
+                    format="%.1f%%", # ex: 7.5%
+                    min_value=0.0,
+                    max_value=1.0 # Valor vem como 0.075
+                ),
+                "Status": st.column_config.TextColumn("Status")
+            }
+
+            st.dataframe(
+                df_para_mostrar.iloc[::-1], 
+                use_container_width=True,
+                column_config=config_colunas, # <--- APLICA A FORMATAÇÃO
+                hide_index=True # Esconde o índice (0, 1, 2...)
+            )
+            ### FIM DA CORREÇÃO v7.8 ###
+            
             ### MELHORIA 2 (DESIGN) / 4 (FUNC) - FIM ###
 
 
@@ -950,7 +1009,7 @@ with tab_times:
             else:
                 df_liga = pd.DataFrame(lista_forcas)
                 df_liga['Força Geral'] = df_liga['Ataque'] - df_liga['Defesa']
-                df_liga = df_liga.sort_values(by="Força Geral", ascending=False)
+                df_liga = df_liga.sort_values(by="Força Geral", ascending=False).reset_index(drop=True)
                 
                 ### MELHORIA B - INÍCIO (Simulador de xG) ###
                 st.subheader(f"🤖 Simulador de xG vs. Média da Liga ({emoji_liga_selecionada} {liga_selecionada_nome})")
@@ -1006,24 +1065,23 @@ with tab_times:
                 st.info("Clique no título de uma coluna para ordenar. 'Força Geral' é a melhor métrica de ranking.")
                 
                 st.dataframe(
-                    df_liga.style.format({
-                        'Ataque': '{:.3f}',
-                        'Defesa': '{:.3f}',
-                        'Força Geral': '{:.3f}'
-                    }),
+                    df_liga, # Não precisa mais do .style.format
                     column_config={
                         "Time": "Time",
                         "Ataque": st.column_config.NumberColumn(
                             "Força de Ataque (DC)", 
-                            help="Mais alto = melhor ataque"
+                            help="Mais alto = melhor ataque",
+                            format="%.3f"
                         ),
                         "Defesa": st.column_config.NumberColumn(
                             "Força de Defesa (DC)", 
-                            help="Mais baixo (mais negativo) = melhor defesa"
+                            help="Mais baixo (mais negativo) = melhor defesa",
+                            format="%.3f"
                         ),
                         "Força Geral": st.column_config.ProgressColumn(
                             "Força Geral (Ataque - Defesa)", 
                             help="Métrica combinada. Mais alto = melhor time.",
+                            format="%.3f",
                             min_value=float(df_liga['Força Geral'].min()),
                             max_value=float(df_liga['Força Geral'].max())
                         )
