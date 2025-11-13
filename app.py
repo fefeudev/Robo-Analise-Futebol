@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.8 - Correção de Formato de Tabela)
-# UPGRADE: Corrigida a leitura de dados do Google Sheets e formatada a tabela.
+# O Robô de Análise (Versão 7.9 - Correção de Formato de Porcentagem)
+# UPGRADE: Corrigido o cálculo de exibição de porcentagem na tabela de histórico.
 
 import streamlit as st
 import requests
@@ -435,7 +435,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.8 - Correção Tabela") # Versão atualizada
+    st.caption("v7.9 - Correção de %") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -948,7 +948,18 @@ with tab_historico:
 
             st.subheader("Últimas Análises (Filtrado)")
             
-            ### CORREÇÃO v7.8 - FORMATAÇÃO DA TABELA ###
+            ### CORREÇÃO v7.9 - FORMATAÇÃO DA TABELA (Multiplica por 100) ###
+            
+            # Copia o dataframe para evitar o SettingWithCopyWarning
+            df_formatado = df_para_mostrar.iloc[::-1].copy()
+            
+            if 'Probabilidade' in df_formatado.columns:
+                # Multiplica por 100 para exibição
+                df_formatado['Probabilidade'] = df_formatado['Probabilidade'] * 100
+            if 'Valor' in df_formatado.columns:
+                # Multiplica por 100 para exibição
+                df_formatado['Valor'] = df_formatado['Valor'] * 100
+            
             # Define a configuração das colunas para formatação
             config_colunas = {
                 "Data": st.column_config.TextColumn("Data"),
@@ -963,24 +974,24 @@ with tab_historico:
                     "Probabilidade",
                     format="%.1f%%", # ex: 81.6%
                     min_value=0.0,
-                    max_value=1.0 # Probabilidade vem como 0.81
+                    max_value=100.0 # Agora o máximo é 100
                 ),
                 "Valor": st.column_config.ProgressColumn(
                     "Valor (EV+)",
                     format="%.1f%%", # ex: 7.5%
                     min_value=0.0,
-                    max_value=1.0 # Valor vem como 0.075
+                    max_value=100.0 # Agora o máximo é 100
                 ),
                 "Status": st.column_config.TextColumn("Status")
             }
 
             st.dataframe(
-                df_para_mostrar.iloc[::-1], 
+                df_formatado, # <-- Usa o novo DF formatado
                 use_container_width=True,
                 column_config=config_colunas, # <--- APLICA A FORMATAÇÃO
                 hide_index=True # Esconde o índice (0, 1, 2...)
             )
-            ### FIM DA CORREÇÃO v7.8 ###
+            ### FIM DA CORREÇÃO v7.9 ###
             
             ### MELHORIA 2 (DESIGN) / 4 (FUNC) - FIM ###
 
@@ -992,7 +1003,7 @@ with tab_times:
     emoji_liga_selecionada = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
 
     # CASO 1: Cérebro DIXON-COLES está ativo
-    if MODO_CEREBRO == "DIXON_COLES" and dados_cerebro_dc:
+    if MODO_CEREBRO == "DIXON-COLES" and dados_cerebro_dc:
         
         try:
             # --- Bloco de dados para ambas as melhorias ---
