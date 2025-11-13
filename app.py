@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.6 - CSS Design)
-# UPGRADE: Adicionado CSS customizado para layout profissional.
+# O Robô de Análise (Versão 7.7 - Correção de Bug do Gráfico)
+# UPGRADE: Corrigido o StreamlitColorLengthError nos gráficos de barra.
 
 import streamlit as st
 import requests
@@ -409,7 +409,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.6 - CSS Design") # Versão atualizada
+    st.caption("v7.7 - Correção de Bug") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -839,17 +839,37 @@ with tab_historico:
             if df_resultados.empty:
                 st.info("Nenhum Green ou Red registrado para gerar gráficos.")
             else:
+                
+                # --- CORREÇÃO DO BUG (StreamlitColorLengthError) ---
+                # 1. Definir o mapa de cores
+                color_map = {
+                    "Green ✅": "#008000",
+                    "Red ❌": "#FF4B4B"
+                }
+                
                 col_graf1, col_graf2 = st.columns(2)
                 
                 with col_graf1:
                     st.markdown("**Por Mercado**")
                     desempenho_mercado = df_resultados.groupby('Mercado')['Status'].value_counts().unstack(fill_value=0)
-                    st.bar_chart(desempenho_mercado, color=["#008000", "#FF4B4B"]) # Verde, Vermelho
+                    
+                    # 2. Criar a lista de cores dinamicamente
+                    mercado_cols = desempenho_mercado.columns
+                    mercado_colors = [color_map[col] for col in mercado_cols if col in color_map]
+                    
+                    # 3. Usar a lista de cores dinâmica
+                    st.bar_chart(desempenho_mercado, color=mercado_colors)
 
                 with col_graf2:
                     st.markdown("**Por Liga**")
                     desempenho_liga = df_resultados.groupby('Liga')['Status'].value_counts().unstack(fill_value=0)
-                    st.bar_chart(desempenho_liga, color=["#008000", "#FF4B4B"]) # Verde, Vermelho
+                    
+                    # 2. Criar a lista de cores dinamicamente
+                    liga_cols = desempenho_liga.columns
+                    liga_colors = [color_map[col] for col in liga_cols if col in color_map]
+                    
+                    # 3. Usar a lista de cores dinâmica
+                    st.bar_chart(desempenho_liga, color=liga_colors)
             
             st.divider() # Linha horizontal
             ### MELHORIA 2 - FIM ###
