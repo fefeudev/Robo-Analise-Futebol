@@ -408,6 +408,7 @@ def enviar_mensagem_telegram(mensagem):
 
 LIGAS_DISPONIVEIS = {
     "Brasileirão": "BSA",
+    "Champions League": "CL",
     "Premier League (ING)": "PL",
     "La Liga (ESP)": "PD",
     "Serie A (ITA)": "SA",
@@ -1174,3 +1175,4 @@ with tab_times:
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
 ### MELHORIA 7 - FIM ###
+
