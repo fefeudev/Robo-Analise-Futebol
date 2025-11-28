@@ -1,6 +1,7 @@
 # app.py
-# O Robô de Análise (Versão 8.1 - Full Automática)
-# UPGRADE: Busca automática de 1x2, Chance Dupla, Over 2.5 e Ambas Marcam.
+# O Robô de Análise (Versão 8.3 - FULL RESTAURADA)
+# CORREÇÃO: Removemos 'doublechance' e 'btts' da busca automática para evitar Erro 422 na conta Grátis.
+# MANTIDO: Toda a estrutura original, design, aba de times e banco de dados.
 
 import streamlit as st
 import requests
@@ -20,12 +21,12 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô de Valor (Auto)",
+    page_title="Robô de Valor (Full)",
     page_icon="🤖", 
     layout="wide"
 )
 
-### DESIGN CUSTOMIZADO (CSS) ###
+### DESIGN CUSTOMIZADO (CSS ORIGINAL RESTAURADO) ###
 st.markdown("""
 <style>
     /* Fundo principal da aplicação */
@@ -137,32 +138,35 @@ MAPA_LIGAS_ODDS = {
 
 def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     """
-    Busca odds automaticamente (1x2, Chance Dupla, Totals 2.5, BTTS)
+    Busca odds automaticamente (Apenas 1x2 e Totals para evitar erro 422).
+    Estratégia: Prioriza Betano, senão pega a primeira disponível.
     """
-    # 1. Configurações Iniciais
     sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_fd)
     api_key_odds = getattr(config, 'THE_ODDS_API_KEY', None)
 
     if not sport_key or not api_key_odds:
         return None 
 
-    # 2. Monta a Requisição (Pedindo todos os mercados)
+    # --- CORREÇÃO DO ERRO 422 ---
+    # Removido 'doublechance' e 'btts' pois a API Free rejeita
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
         'apiKey': api_key_odds,
-        'regions': 'eu', # Casas Europeias (Bet365, Pinnacle, 1xBet...)
-        'markets': 'h2h,doublechance,totals,btts', # <--- TODOS OS MERCADOS AQUI
+        'regions': 'eu',
+        'markets': 'h2h,totals', # Apenas mercados seguros
         'oddsFormat': 'decimal'
     }
 
     try:
-        response = requests.get(url, params=params, timeout=6) # Timeout levemente maior
+        response = requests.get(url, params=params, timeout=6)
         if response.status_code != 200: 
+            # Log discreto no console do servidor para debug
+            print(f"Erro API Odds: {response.status_code} - {response.text}")
             return None
         
         dados = response.json()
         
-        # 3. Fuzzy Match (Encontrar o jogo certo)
+        # Fuzzy Match
         melhor_match = None
         maior_score = 0.0
         
@@ -175,64 +179,60 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
                 maior_score = media_score
                 melhor_match = jogo
         
-        # 4. Extração de Odds (Se o match for bom)
         if melhor_match and maior_score >= 0.65:
             bookmakers = melhor_match.get('bookmakers', [])
-            if bookmakers:
-                # Pega a primeira casa disponível
-                book = bookmakers[0]
-                
-                # Inicializa dicionário de resultados
-                resultados = {
-                    'casa_nome': book['title'],
-                    'casa': None, 'empate': None, 'visitante': None, # 1x2
-                    'dc_1x': None, 'dc_x2': None, 'dc_12': None,     # Chance Dupla
-                    'over_2_5': None,                                # Over 2.5
-                    'btts_sim': None                                 # Ambas Marcam
-                }
-                
-                # Itera sobre os mercados retornados
+            if not bookmakers: return None
+
+            # Dicionário inicial (apenas o que podemos buscar)
+            resultados = {
+                'casa_nome': 'Misto',
+                'casa': None, 'empate': None, 'visitante': None,
+                'over_2_5': None
+                # BTTS e Chance Dupla ficam como None pois a API Free não fornece
+            }
+
+            def extrair_dados(book, current_res):
+                novos = {}
                 for mercado in book['markets']:
-                    
-                    # --- Mercado: Vencedor (1x2) ---
+                    # 1x2
                     if mercado['key'] == 'h2h':
                         for outcome in mercado['outcomes']:
-                            if outcome['name'] == melhor_match['home_team']: resultados['casa'] = outcome['price']
-                            elif outcome['name'] == melhor_match['away_team']: resultados['visitante'] = outcome['price']
-                            elif outcome['name'] == 'Draw': resultados['empate'] = outcome['price']
+                            if outcome['name'] == melhor_match['home_team']: novos['casa'] = outcome['price']
+                            elif outcome['name'] == melhor_match['away_team']: novos['visitante'] = outcome['price']
+                            elif outcome['name'] == 'Draw': novos['empate'] = outcome['price']
                     
-                    # --- Mercado: Chance Dupla ---
-                    elif mercado['key'] == 'doublechance':
-                        for outcome in mercado['outcomes']:
-                            nome_op = outcome['name'] # Ex: "Man City/Draw"
-                            # Lógica segura de strings
-                            tem_casa = melhor_match['home_team'] in nome_op
-                            tem_fora = melhor_match['away_team'] in nome_op
-                            tem_empate = 'Draw' in nome_op
-                            
-                            if tem_casa and tem_empate: resultados['dc_1x'] = outcome['price']
-                            elif tem_fora and tem_empate: resultados['dc_x2'] = outcome['price']
-                            elif tem_casa and tem_fora: resultados['dc_12'] = outcome['price']
-                    
-                    # --- Mercado: Gols (Totals) - Filtra só Over 2.5 ---
+                    # Totals (Over 2.5)
                     elif mercado['key'] == 'totals':
                         for outcome in mercado['outcomes']:
-                            # Procura especificamente linha 2.5 e nome Over
-                            if outcome['name'] == 'Over' and outcome.get('point') == 2.5:
-                                resultados['over_2_5'] = outcome['price']
-                                
-                    # --- Mercado: Ambas Marcam (BTTS) ---
-                    elif mercado['key'] == 'btts':
-                        for outcome in mercado['outcomes']:
-                            if outcome['name'] == 'Yes':
-                                resultados['btts_sim'] = outcome['price']
+                            # Garante que é numérico
+                            ponto = float(outcome.get('point', 0))
+                            if outcome['name'] == 'Over' and ponto == 2.5:
+                                novos['over_2_5'] = outcome['price']
+                return novos
 
-                return resultados
+            # 1. Tenta Betano
+            betano_book = next((b for b in bookmakers if b['key'] == 'betano'), None)
+            if betano_book:
+                dados_betano = extrair_dados(betano_book, resultados)
+                resultados.update(dados_betano)
+                resultados['casa_nome'] = 'Betano'
+            
+            # 2. Preenche lacunas com outros
+            if resultados['casa'] is None or resultados['over_2_5'] is None:
+                for book in bookmakers:
+                    if book['key'] == 'betano': continue
+                    dados_extras = extrair_dados(book, resultados)
+                    for k, v in dados_extras.items():
+                        if resultados.get(k) is None and v is not None:
+                            resultados[k] = v
+                            if resultados['casa_nome'] == 'Misto': resultados['casa_nome'] = book['title']
+
+            if resultados['casa'] is None: return None
+            return resultados
 
     except Exception as e:
         print(f"Erro silencioso ao buscar odds: {e}")
         return None
-    
     return None
 
 # --- FUNÇÕES DO BANCO DE DADOS (Google Sheets) ---
@@ -540,7 +540,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v8.1 - Auto (Odds+Gols+BTTS)") 
+    st.caption("v8.3 - Full + Fix 422") 
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -708,12 +708,12 @@ with tab_analise:
         jogo = st.session_state.jogo_selecionado
         i = st.session_state.jogo_indice
         
-        # --- BUSCA ODDS AUTOMÁTICAS ---
+        # --- BUSCA ODDS AUTOMÁTICAS (Versão Segura) ---
         odds_auto = None
         chave_cache_odds = f"odds_{jogo['time_casa']}_{jogo['data_jogo']}"
         
         if chave_cache_odds not in st.session_state:
-            with st.spinner("🤖 Buscando odds completas (1x2, Gols, Ambas Marcam)..."):
+            with st.spinner("🤖 Buscando odds (Apenas 1x2 e Totals para evitar erro)..."):
                 odds_encontradas = buscar_odds_automaticas(LIGA_ATUAL, jogo['time_casa'], jogo['time_visitante'])
                 if odds_encontradas:
                     st.session_state[chave_cache_odds] = odds_encontradas
@@ -734,7 +734,7 @@ with tab_analise:
             
             st.subheader("Inserir Odds do Jogo")
             if odds_auto:
-                st.caption(f"✨ Preenchido automaticamente com odds da **{odds_auto['casa_nome']}**")
+                st.caption(f"✨ Preenchido automaticamente com odds da **{odds_auto['casa_nome']}** (Chance Dupla e BTTS não disponíveis na API Free)")
 
             col_form1, col_form2 = st.columns(2)
 
@@ -743,14 +743,14 @@ with tab_analise:
             val_empate = odds_auto['empate'] if odds_auto else None
             val_visit = odds_auto['visitante'] if odds_auto else None
             
-            # Novos valores padrão (Gols e BTTS)
+            # Novos valores padrão (Apenas Over 2.5 vem da API agora)
             val_over = odds_auto.get('over_2_5') if odds_auto else None
-            val_btts = odds_auto.get('btts_sim') if odds_auto else None
+            val_btts = None # BTTS precisa ser manual agora
             
-            # Novos valores padrão (Chance Dupla)
-            val_1x = odds_auto.get('dc_1x') if odds_auto else None
-            val_x2 = odds_auto.get('dc_x2') if odds_auto else None
-            val_12 = odds_auto.get('dc_12') if odds_auto else None
+            # Novos valores padrão (Chance Dupla precisa ser manual agora)
+            val_1x = None
+            val_x2 = None
+            val_12 = None
 
             with col_form1:
                 st.markdown("**📊 Resultado (1x2)**")
@@ -763,7 +763,7 @@ with tab_analise:
                 odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=val_btts, format="%.2f", key=f"btts_{i}")
 
             with col_form2:
-                st.markdown("**🤝 Chance Dupla**")
+                st.markdown("**🤝 Chance Dupla (Manual)**")
                 odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=val_1x, format="%.2f", key=f"dc1x_{i}")
                 odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=val_x2, format="%.2f", key=f"dcx2_{i}")
                 odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=val_12, format="%.2f", key=f"dc12_{i}")
