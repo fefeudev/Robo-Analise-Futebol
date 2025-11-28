@@ -1,7 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 8.5 - Hierarquia de Confiança)
-# CORREÇÃO: Busca apenas mercados seguros (1x2 + Totals) para evitar erro 422.
-# INTELIGÊNCIA: Se não achar Betano, busca 1xBet ou Pinnacle (nesta ordem).
+# O Robô de Análise (Versão 7.9 - Correção de Formato de Porcentagem)
+# UPGRADE: Corrigido o cálculo de exibição de porcentagem na tabela de histórico.
 
 import streamlit as st
 import requests
@@ -12,7 +11,6 @@ import config
 import time
 from datetime import datetime, timedelta
 import json
-from difflib import SequenceMatcher 
 
 # --- NOVOS IMPORTS DO BANCO DE DADOS ---
 import gspread
@@ -21,26 +19,91 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô de Valor (Smart)",
+    page_title="Robô de Valor (BD)",
     page_icon="🤖", 
     layout="wide"
 )
 
-### DESIGN CUSTOMIZADO (CSS) ###
+### MELHORIA 3 (DESIGN) - INÍCIO (CSS Customizado) ###
 st.markdown("""
 <style>
-    .stApp { background-color: #0A0A1A; }
-    [data-testid="stSidebar"] { background-color: #0F1116; border-right: 1px solid #2a2a3a; }
-    [data-testid="stAppViewContainer"] > h1, h2 { color: #FAFAFA; font-weight: 600; }
-    h3 { color: #4A90E2; font-weight: 600; }
-    [data-testid="stMetric"] { background-color: #1F202B; border: 1px solid #333344; border-radius: 10px; padding: 15px; }
-    [data-testid="stMetricLabel"] { color: #AAAAEE; }
-    [data-testid="stButton"] > button { border-radius: 8px; background-color: #4A90E2; color: white; border: none; font-weight: 600; }
-    [data-testid="stButton"] > button:hover { background-color: #3A70C1; color: white; border: none; }
-    [data-testid="stSidebar"] [data-testid="stButton"] > button { background-color: #2a2a3a; }
-    [data-testid="stExpander"] > summary { background-color: #1F202B; border-radius: 8px; border: 1px solid #333344; }
+    /* Fundo principal da aplicação */
+    .stApp {
+        background-color: #0A0A1A; /* Fundo mais escuro */
+    }
+
+    /* Cor de fundo da sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #0F1116; /* Um pouco mais claro que o fundo */
+        border-right: 1px solid #2a2a3a;
+    }
+
+    /* Título Principal (H1) */
+    [data-testid="stAppViewContainer"] > h1 {
+        color: #FAFAFA;
+        font-weight: 600;
+    }
+    
+    /* Títulos de Seção (H2 - st.header) */
+    h2 {
+        color: #FAFAFA;
+    }
+
+    /* Títulos de Sub-seção (H3 - st.subheader) */
+    h3 {
+        color: #4A90E2; /* Azul profissional */
+        font-weight: 600;
+    }
+
+    /* Cards de Métrica (st.metric) */
+    [data-testid="stMetric"] {
+        background-color: #1F202B;
+        border: 1px solid #333344;
+        border-radius: 10px;
+        padding: 15px;
+    }
+    
+    /* Labels das Métricas */
+    [data-testid="stMetricLabel"] {
+        color: #AAAAEE; /* Um roxo/azul claro */
+    }
+
+    /* Botões */
+    [data-testid="stButton"] > button {
+        border-radius: 8px;
+        background-color: #4A90E2;
+        color: white;
+        border: none;
+        font-weight: 600;
+    }
+    [data-testid="stButton"] > button:hover {
+        background-color: #3A70C1; /* Um pouco mais escuro no hover */
+        color: white;
+        border: none;
+    }
+    
+    /* Botões de data da sidebar (para não ficarem azuis) */
+    [data-testid="stSidebar"] [data-testid="stButton"] > button {
+        background-color: #2a2a3a;
+    }
+    [data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
+        background-color: #3a3a4a;
+    }
+
+
+    /* Headers dos Expanders (st.expander) */
+    [data-testid="stExpander"] > summary {
+        background-color: #1F202B;
+        border-radius: 8px;
+        border: 1px solid #333344;
+    }
+    [data-testid="stExpander"] > summary:hover {
+        background-color: #2a2a3a;
+    }
+
 </style>
 """, unsafe_allow_html=True)
+### MELHORIA 3 (DESIGN) - FIM ###
 
 # --- FUNÇÕES GLOBAIS DE API (football-data.org) ---
 @st.cache_data 
@@ -55,137 +118,6 @@ def fazer_requisicao_api(endpoint, params):
         return response.json()
     except Exception as e:
         st.error(f"Erro de API: {e}")
-    return None
-
-# --- FUNÇÕES DA NOVA API DE ODDS (The-Odds-API) ---
-
-MAPA_LIGAS_ODDS = {
-    "BSA": "soccer_brazil_campeonato",
-    "PL": "soccer_epl", 
-    "CL": "soccer_uefa_champs_league",
-    "PD": "soccer_spain_la_liga",
-    "SA": "soccer_italy_serie_a",
-    "BL1": "soccer_germany_bundesliga",
-    "FL1": "soccer_france_ligue_one",
-    "DED": "soccer_netherlands_eredivisie",
-    "PPL": "soccer_portugal_primeira_liga",
-    "ELC": "soccer_efl_champ" 
-}
-
-def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
-    """
-    Busca odds automaticamente.
-    ESTRATÉGIA: Hierarquia de Confiança (Betano > 1xBet > Pinnacle > Betfair > Qualquer uma).
-    MERCADOS: Apenas 1x2 e Totals (seguro contra erro 422).
-    """
-    sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_fd)
-    api_key_odds = getattr(config, 'THE_ODDS_API_KEY', None)
-
-    if not sport_key or not api_key_odds:
-        return None 
-
-    # 1. Configura a busca (Apenas mercados seguros)
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-    params = {
-        'apiKey': api_key_odds,
-        'regions': 'eu', # Traz 1xBet, Pinnacle, Betfair, etc.
-        'markets': 'h2h,totals', 
-        'oddsFormat': 'decimal'
-    }
-
-    try:
-        response = requests.get(url, params=params, timeout=6)
-        if response.status_code != 200: 
-            # Log discreto
-            print(f"Erro API Odds: {response.status_code}")
-            return None
-        
-        dados = response.json()
-        
-        # 2. Fuzzy Match (Encontra o jogo certo)
-        melhor_match = None
-        maior_score = 0.0
-        
-        for jogo in dados:
-            sim_casa = SequenceMatcher(None, time_casa_fd, jogo['home_team']).ratio()
-            sim_visit = SequenceMatcher(None, time_visitante_fd, jogo['away_team']).ratio()
-            media_score = (sim_casa + sim_visit) / 2
-            
-            if media_score > maior_score:
-                maior_score = media_score
-                melhor_match = jogo
-        
-        # 3. Processamento das Odds
-        if melhor_match and maior_score >= 0.65:
-            bookmakers = melhor_match.get('bookmakers', [])
-            if not bookmakers: return None
-
-            # --- HIERARQUIA DE ESCOLHA ---
-            # Define a ordem de preferência das casas
-            ordem_prioridade = ['betano', 'onexbet', 'pinnacle', 'betfair_ex_eu', 'bet365']
-            
-            book_escolhido = None
-            
-            # Tenta encontrar na ordem
-            for chave_preferida in ordem_prioridade:
-                # Procura se alguma casa na lista tem essa chave
-                candidato = next((b for b in bookmakers if chave_preferida in b['key']), None)
-                if candidato:
-                    book_escolhido = candidato
-                    break
-            
-            # Se não achou nenhuma das preferidas, pega a primeira da lista
-            if not book_escolhido:
-                book_escolhido = bookmakers[0]
-
-            # --- EXTRAÇÃO DE DADOS ---
-            resultados = {
-                'casa_nome': book_escolhido['title'],
-                'casa': None, 'empate': None, 'visitante': None,
-                'over_2_5': None
-            }
-
-            def extrair_dados_do_book(book, current_res):
-                novos = {}
-                for mercado in book['markets']:
-                    # 1x2
-                    if mercado['key'] == 'h2h':
-                        for outcome in mercado['outcomes']:
-                            if outcome['name'] == melhor_match['home_team']: novos['casa'] = outcome['price']
-                            elif outcome['name'] == melhor_match['away_team']: novos['visitante'] = outcome['price']
-                            elif outcome['name'] == 'Draw': novos['empate'] = outcome['price']
-                    
-                    # Totals (Over 2.5)
-                    elif mercado['key'] == 'totals':
-                        for outcome in mercado['outcomes']:
-                            ponto = float(outcome.get('point', 0))
-                            if outcome['name'] == 'Over' and ponto == 2.5:
-                                novos['over_2_5'] = outcome['price']
-                return novos
-
-            # Extrai do escolhido
-            dados_principais = extrair_dados_do_book(book_escolhido, resultados)
-            resultados.update(dados_principais)
-
-            # ESTRATÉGIA DE LACUNAS (Se faltar Over 2.5, pega de outro lugar)
-            if resultados['casa'] is None or resultados['over_2_5'] is None:
-                for book in bookmakers:
-                    if book['key'] == book_escolhido['key']: continue
-                    
-                    dados_extras = extrair_dados_do_book(book, resultados)
-                    for k, v in dados_extras.items():
-                        if resultados.get(k) is None and v is not None:
-                            resultados[k] = v
-                            # Se a casa principal estava vazia de tudo, muda o nome para a secundária
-                            if resultados['casa'] is None and k == 'casa':
-                                resultados['casa_nome'] = book['title']
-
-            if resultados['casa'] is None: return None
-            return resultados
-
-    except Exception as e:
-        print(f"Erro silencioso ao buscar odds: {e}")
-        return None
     return None
 
 # --- FUNÇÕES DO BANCO DE DADOS (Google Sheets) ---
@@ -204,7 +136,7 @@ def conectar_ao_banco_de_dados():
         return sheet
     except Exception as e:
         st.error(f"Erro ao conectar ao Google Sheets: {e}") 
-        st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL).")
+        st.error("Verifique seus 'Secrets' (google_creds e GOOGLE_SHEET_URL) e as permissões da API no Google Cloud.")
         return None
 
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
@@ -223,26 +155,36 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
     except Exception as e:
         st.error(f"Erro ao salvar no Google Sheets: {e}")
 
+### CORREÇÃO v7.8 - MUDANÇA NA LEITURA DE DADOS ###
 @st.cache_data(ttl=60) 
 def carregar_historico_do_banco(_sheet):
     try:
+        ### CORREÇÃO DE LEITURA DE DADOS - INÍCIO ###
+        # Usar get_all_values() é mais robusto que get_all_records()
         lista_de_listas = _sheet.get_all_values()
-        if len(lista_de_listas) < 2: 
+        if len(lista_de_listas) < 2: # Se não tiver nem header e 1 linha
             return pd.DataFrame(), 0, 0
 
         header = lista_de_listas[0]
         dados = lista_de_listas[1:]
         
+        # Define os nomes das colunas ao criar o DataFrame
         df = pd.DataFrame(dados, columns=header)
         
+        # Colunas que esperamos que sejam numéricas
         colunas_para_converter = ['Odd', 'Probabilidade', 'Valor']
+        
         for col in colunas_para_converter:
             if col in df.columns:
+                # Converte para numérico, forçando erros a virarem 'NaN' (Not a Number)
+                # Substitui vírgulas por pontos, caso o Google Sheets esteja em local BR/PT
                 if df[col].dtype == 'object':
                      df[col] = df[col].str.replace(',', '.', regex=False)
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
+        # Remove linhas onde a conversão para número falhou (se houver)
         df = df.dropna(subset=colunas_para_converter)
+        ### CORREÇÃO DE LEITURA DE DADOS - FIM ###
         
         if not df.empty:
             if 'Status' in df.columns:
@@ -258,6 +200,7 @@ def carregar_historico_do_banco(_sheet):
     except Exception as e:
         st.error(f"Erro ao carregar o histórico: {e}")
         return pd.DataFrame(), 0, 0
+### FIM DA CORREÇÃO v7.8 ###
 
 def atualizar_status_no_banco(sheet, row_index, novo_status):
     try:
@@ -461,7 +404,7 @@ def enviar_mensagem_telegram(mensagem):
     except Exception as e:
         st.error(f"Erro fatal no envio do Telegram: {e}")
 
-# --- A INTERFACE GRÁFICA (Função Principal) ---
+# --- A INTERFACE GRÁFICA (Função Principal ATUALIZADA) ---
 
 LIGAS_DISPONIVEIS = {
     "Brasileirão": "BSA",
@@ -493,7 +436,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v8.5 - Smart Odds") 
+    st.caption("v7.9 - Correção de %") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -555,7 +498,7 @@ st.title("Painel de Análise de Valor (Híbrido) 💾")
 # Conecta ao nosso "banco de dados"
 db_sheet = conectar_ao_banco_de_dados()
 
-# --- TREINA O CÉREBRO ---
+# --- TREINA O CÉREBRO (MOVIDO PARA FORA DAS ABAS) ---
 MODO_CEREBRO = "FALHA" 
 dados_cerebro_dc = None
 df_historico_poisson = None
@@ -571,6 +514,8 @@ else:
         df_historico_poisson, medias_liga_poisson = carregar_e_treinar_cerebro_poisson(LIGA_ATUAL, TEMPORADA_ATUAL)
     if df_historico_poisson is not None:
         MODO_CEREBRO = "POISSON_RECENTE"
+
+# --- FIM DO BLOCO MOVIDO ---
 
 
 # Cria as três abas principais
@@ -611,7 +556,10 @@ with tab_analise:
             else:
                 st.info(f"Encontrados {len(jogos_do_dia)} jogos. Clique em um jogo para analisar:")
                 
+                ### MELHORIA 1 - INÍCIO (Mostrar xG na Lista de Jogos) ###
+                
                 for i, jogo in enumerate(jogos_do_dia):
+                    
                     xg_tupla = None
                     try:
                         if MODO_CEREBRO == "DIXON_COLES":
@@ -633,9 +581,11 @@ with tab_analise:
                                 if resultado_previsao:
                                     _, xg_tupla = resultado_previsao
                     except Exception as e:
+                        # Falha silenciosa para não quebrar a lista
                         print(f"Erro ao calcular xG para a lista: {e}")
 
                     col1, col2 = st.columns([3, 1])
+
                     with col1:
                         def selecionar_jogo(jogo_clicado=jogo, indice=i):
                             st.session_state.jogo_selecionado = jogo_clicado
@@ -647,6 +597,7 @@ with tab_analise:
                             use_container_width=True,
                             key=f"btn_jogo_{i}"
                         )
+                    
                     with col2:
                         if xg_tupla:
                             st.metric(label="xG Previsto", 
@@ -655,27 +606,12 @@ with tab_analise:
                                       delta_color="off")
                         else:
                             st.button("Analisar", on_click=selecionar_jogo, key=f"btn_analisar_basic_{i}", use_container_width=True)
+                ### MELHORIA 1 - FIM ###
     
     # Se 'jogo_selecionado' ESTÁ na memória, mostra a "Tela 2" (Análise)
     else:
         jogo = st.session_state.jogo_selecionado
         i = st.session_state.jogo_indice
-        
-        # --- BUSCA ODDS AUTOMÁTICAS (Versão Segura) ---
-        odds_auto = None
-        chave_cache_odds = f"odds_{jogo['time_casa']}_{jogo['data_jogo']}"
-        
-        if chave_cache_odds not in st.session_state:
-            with st.spinner("🤖 Buscando odds (Prioridade Betano > 1xBet > Pinnacle)..."):
-                odds_encontradas = buscar_odds_automaticas(LIGA_ATUAL, jogo['time_casa'], jogo['time_visitante'])
-                if odds_encontradas:
-                    st.session_state[chave_cache_odds] = odds_encontradas
-                    st.toast(f"Odds encontradas na {odds_encontradas['casa_nome']}!", icon="✅")
-                else:
-                    st.session_state[chave_cache_odds] = None # Marca que buscou mas não achou
-        
-        odds_auto = st.session_state.get(chave_cache_odds)
-        # -------------------------------------------
         
         if st.button("⬅️ Voltar para a lista de jogos"):
             del st.session_state.jogo_selecionado
@@ -685,45 +621,28 @@ with tab_analise:
         with st.form(key=f"form_jogo_{i}"):
             st.header(f"Jogo: {jogo['time_casa']} vs {jogo['time_visitante']}")
             
+            ### MELHORIA 1 (DESIGN) - INÍCIO (Formulário Consolidado) ###
             st.subheader("Inserir Odds do Jogo")
-            if odds_auto:
-                nome_casa = odds_auto.get('casa_nome', 'Auto')
-                st.success(f"✨ Preenchido automaticamente com odds da **{nome_casa}**")
-                st.caption("Nota: Chance Dupla e BTTS não disponíveis na API Free (preencher manual)")
-
             col_form1, col_form2 = st.columns(2)
-
-            # Define os valores padrão (1x2)
-            val_casa = odds_auto['casa'] if odds_auto else None
-            val_empate = odds_auto['empate'] if odds_auto else None
-            val_visit = odds_auto['visitante'] if odds_auto else None
-            
-            # Novos valores padrão (Apenas Over 2.5 vem da API agora)
-            val_over = odds_auto.get('over_2_5') if odds_auto else None
-            val_btts = None # BTTS precisa ser manual agora
-            
-            # Novos valores padrão (Chance Dupla precisa ser manual agora)
-            val_1x = None
-            val_x2 = None
-            val_12 = None
 
             with col_form1:
                 st.markdown("**📊 Resultado (1x2)**")
-                odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=val_casa, format="%.2f", key=f"casa_{i}")
-                odd_empate = st.number_input("Empate (X)", min_value=1.0, value=val_empate, format="%.2f", key=f"empate_{i}")
-                odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=val_visit, format="%.2f", key=f"visit_{i}")
+                odd_casa = st.number_input(f"{jogo['time_casa']} (1)", min_value=1.0, value=None, format="%.2f", key=f"casa_{i}")
+                odd_empate = st.number_input("Empate (X)", min_value=1.0, value=None, format="%.2f", key=f"empate_{i}")
+                odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=None, format="%.2f", key=f"visit_{i}")
                 
                 st.markdown("**⚽ Gols**")
-                odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=val_over, format="%.2f", key=f"over_{i}")
-                odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=val_btts, format="%.2f", key=f"btts_{i}")
+                odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
+                odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
 
             with col_form2:
-                st.markdown("**🤝 Chance Dupla (Manual)**")
-                odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=val_1x, format="%.2f", key=f"dc1x_{i}")
-                odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=val_x2, format="%.2f", key=f"dcx2_{i}")
-                odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=val_12, format="%.2f", key=f"dc12_{i}")
+                st.markdown("**🤝 Chance Dupla**")
+                odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
+                odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
+                odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
             
             st.divider()
+            ### MELHORIA 1 (DESIGN) - FIM ###
 
             submitted = st.form_submit_button("Analisar este Jogo")
 
@@ -758,6 +677,7 @@ with tab_analise:
                     
                     if probs_robo:
                         
+                        ### MELHORIA 9 - INÍCIO (Termômetro de Tendência) ###
                         st.subheader("🌡️ Termômetro do Cérebro")
                         col_t1, col_t2 = st.columns(2)
                 
@@ -787,6 +707,7 @@ with tab_analise:
                                 st.info("Tendência: Mercado de Gols indefinido.")
                                 
                         st.divider()
+                        ### MELHORIA 9 - FIM ###
                         
                         oportunidades = encontrar_valor(
                             probs_robo, odds_manuais, 
@@ -883,8 +804,10 @@ with tab_historico:
     if db_sheet is None:
         st.error("Não foi possível conectar ao Google Sheets. Verifique seus 'Secrets'.")
     else:
+        # 1. Carrega os dados da planilha
         df_historico_db, greens, reds = carregar_historico_do_banco(db_sheet)
         
+        # 2. Mostra os Contadores (Métricas)
         st.subheader("Desempenho Geral")
         total_analises = greens + reds
         assertividade = (greens / total_analises * 100) if total_analises > 0 else 0
@@ -894,13 +817,14 @@ with tab_historico:
         col_m2.metric("Reds ❌", f"{reds}")
         col_m3.metric("Assertividade", f"{assertividade:.1f}%")
         
-        st.divider() 
+        st.divider() # Linha horizontal
         
+        ### MELHORIA 5 - INÍCIO (Mover "Atualizar Status" para cima) ###
         with st.expander("✏️ Atualizar Status de Análises Pendentes"):
             if 'Status' in df_historico_db.columns:
                 opcoes_para_atualizar_df = df_historico_db[df_historico_db['Status'] == 'Aguardando ⏳']
             else:
-                opcoes_para_atualizar_df = pd.DataFrame(columns=df_historico_db.columns) 
+                opcoes_para_atualizar_df = pd.DataFrame(columns=df_historico_db.columns) # Cria um DF vazio
 
             opcoes_para_atualizar_lista = [
                 f"{idx}: [{row['Liga']}] {row['Jogo']} - Mercado: {row['Mercado']}" 
@@ -919,25 +843,32 @@ with tab_historico:
                 col_b1, col_b2 = st.columns(2)
                 
                 if col_b1.button("Marcar como Green ✅", use_container_width=True, key="btn_green"):
-                    if analise_selecionada: 
+                    if analise_selecionada: # Verifica se algo foi selecionado
                         indice_real_df = int(analise_selecionada.split(':')[0])
                         atualizar_status_no_banco(db_sheet, indice_real_df, "Green ✅")
                     
                 if col_b2.button("Marcar como Red ❌", use_container_width=True, key="btn_red"):
-                    if analise_selecionada: 
+                    if analise_selecionada: # Verifica se algo foi selecionado
                         indice_real_df = int(analise_selecionada.split(':')[0])
                         atualizar_status_no_banco(db_sheet, indice_real_df, "Red ❌")
+        ### MELHORIA 5 - FIM ###
         
+        # (Correção para planilha vazia)
         if df_historico_db.empty:
             st.info("Nenhuma análise foi salva no banco de dados ainda. Faça sua primeira análise!")
         else:
+            ### MELHORIA 2 - INÍCIO (Gráficos de Desempenho Lado a Lado) ###
             st.subheader("Desempenho Detalhado")
             
+            # Filtra apenas por Green/Red
             df_resultados = df_historico_db[df_historico_db['Status'].isin(['Green ✅', 'Red ❌'])]
             
             if df_resultados.empty:
                 st.info("Nenhum Green ou Red registrado para gerar gráficos.")
             else:
+                
+                # --- CORREÇÃO DO BUG (StreamlitColorLengthError) ---
+                # 1. Definir o mapa de cores
                 color_map = {
                     "Green ✅": "#008000",
                     "Red ❌": "#FF4B4B"
@@ -948,22 +879,35 @@ with tab_historico:
                 with col_graf1:
                     st.markdown("**Por Mercado**")
                     desempenho_mercado = df_resultados.groupby('Mercado')['Status'].value_counts().unstack(fill_value=0)
+                    
+                    # 2. Criar a lista de cores dinamicamente
                     mercado_cols = desempenho_mercado.columns
                     mercado_colors = [color_map[col] for col in mercado_cols if col in color_map]
+                    
+                    # 3. Usar a lista de cores dinâmica
                     st.bar_chart(desempenho_mercado, color=mercado_colors)
 
                 with col_graf2:
                     st.markdown("**Por Liga**")
                     desempenho_liga = df_resultados.groupby('Liga')['Status'].value_counts().unstack(fill_value=0)
+                    
+                    # 2. Criar a lista de cores dinamicamente
                     liga_cols = desempenho_liga.columns
                     liga_colors = [color_map[col] for col in liga_cols if col in color_map]
+                    
+                    # 3. Usar a lista de cores dinâmica
                     st.bar_chart(desempenho_liga, color=liga_colors)
             
-            st.divider() 
+            st.divider() # Linha horizontal
+            ### MELHORIA 2 - FIM ###
             
+            # 3. Mostra a tabela de dados
+            
+            ### MELHORIA 2 (DESIGN) / 4 (FUNC) - INÍCIO (Filtros Interativos) ###
             st.subheader("🔎 Filtrar Histórico")
-            df_para_mostrar = df_historico_db.copy() 
+            df_para_mostrar = df_historico_db.copy() # Copia o dataframe original
 
+            # Garante que as colunas existem antes de tentar filtrar
             colunas_presentes = df_para_mostrar.columns
             
             col_f1, col_f2, col_f3 = st.columns(3)
@@ -976,6 +920,8 @@ with tab_historico:
                     )
                     if ligas_selecionadas:
                         df_para_mostrar = df_para_mostrar[df_para_mostrar['Liga'].isin(ligas_selecionadas)]
+                else:
+                    st.caption("Coluna 'Liga' não encontrada.")
             
             with col_f2:
                 if 'Mercado' in colunas_presentes:
@@ -986,6 +932,8 @@ with tab_historico:
                     )
                     if mercados_selecionados:
                         df_para_mostrar = df_para_mostrar[df_para_mostrar['Mercado'].isin(mercados_selecionados)]
+                else:
+                    st.caption("Coluna 'Mercado' não encontrada.")
 
             with col_f3:
                 if 'Status' in colunas_presentes:
@@ -996,16 +944,24 @@ with tab_historico:
                     )
                     if status_selecionados:
                         df_para_mostrar = df_para_mostrar[df_para_mostrar['Status'].isin(status_selecionados)]
+                else:
+                    st.caption("Coluna 'Status' não encontrada.")
 
             st.subheader("Últimas Análises (Filtrado)")
             
+            ### CORREÇÃO v7.9 - FORMATAÇÃO DA TABELA (Multiplica por 100) ###
+            
+            # Copia o dataframe para evitar o SettingWithCopyWarning
             df_formatado = df_para_mostrar.iloc[::-1].copy()
             
             if 'Probabilidade' in df_formatado.columns:
+                # Multiplica por 100 para exibição
                 df_formatado['Probabilidade'] = df_formatado['Probabilidade'] * 100
             if 'Valor' in df_formatado.columns:
+                # Multiplica por 100 para exibição
                 df_formatado['Valor'] = df_formatado['Valor'] * 100
             
+            # Define a configuração das colunas para formatação
             config_colunas = {
                 "Data": st.column_config.TextColumn("Data"),
                 "Liga": st.column_config.TextColumn("Liga"),
@@ -1013,38 +969,45 @@ with tab_historico:
                 "Mercado": st.column_config.TextColumn("Mercado"),
                 "Odd": st.column_config.NumberColumn(
                     "Odd",
-                    format="%.2f" 
+                    format="%.2f" # ex: 1.35
                 ),
                 "Probabilidade": st.column_config.ProgressColumn(
                     "Probabilidade",
-                    format="%.1f%%", 
+                    format="%.1f%%", # ex: 81.6%
                     min_value=0.0,
-                    max_value=100.0 
+                    max_value=100.0 # Agora o máximo é 100
                 ),
                 "Valor": st.column_config.ProgressColumn(
                     "Valor (EV+)",
-                    format="%.1f%%", 
+                    format="%.1f%%", # ex: 7.5%
                     min_value=0.0,
-                    max_value=100.0 
+                    max_value=100.0 # Agora o máximo é 100
                 ),
                 "Status": st.column_config.TextColumn("Status")
             }
 
             st.dataframe(
-                df_formatado, 
+                df_formatado, # <-- Usa o novo DF formatado
                 use_container_width=True,
-                column_config=config_colunas, 
-                hide_index=True 
+                column_config=config_colunas, # <--- APLICA A FORMATAÇÃO
+                hide_index=True # Esconde o índice (0, 1, 2...)
             )
+            ### FIM DA CORREÇÃO v7.9 ###
+            
+            ### MELHORIA 2 (DESIGN) / 4 (FUNC) - FIM ###
 
-# --- ABA 3: ANALISAR TIMES ---
+
+### MELHORIA 7 (A, B, C) - INÍCIO (Nova Aba: Analisar Times) ###
 with tab_times:
     st.header("🔎 Dashboard de Análise de Times")
     
     emoji_liga_selecionada = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
 
-    if MODO_CEREBRO == "DIXON_COLES" and dados_cerebro_dc:
+    # CASO 1: Cérebro DIXON-COLES está ativo
+    if MODO_CEREBRO == "DIXON-COLES" and dados_cerebro_dc:
+        
         try:
+            # --- Bloco de dados para ambas as melhorias ---
             lista_forcas = []
             for time, forcas in dados_cerebro_dc['forcas'].items():
                 lista_forcas.append({
@@ -1060,30 +1023,38 @@ with tab_times:
                 df_liga['Força Geral'] = df_liga['Ataque'] - df_liga['Defesa']
                 df_liga = df_liga.sort_values(by="Força Geral", ascending=False).reset_index(drop=True)
                 
+                ### MELHORIA B - INÍCIO (Simulador de xG) ###
                 st.subheader(f"🤖 Simulador de xG vs. Média da Liga ({emoji_liga_selecionada} {liga_selecionada_nome})")
                 st.info("Traduza os 'números de força' em Gols Esperados (xG). Selecione um time para ver qual seria o xG esperado dele contra um time 'médio' da liga.")
 
+                # 1. Calcular o "Time Médio"
                 avg_ataque = df_liga['Ataque'].mean()
                 avg_defesa = df_liga['Defesa'].mean()
                 vantagem_casa = dados_cerebro_dc['vantagem_casa']
 
+                # 2. Selectbox para escolher o time (ordena a lista de times do DF)
                 time_para_simular = st.selectbox(
                     "Selecione um time para simular:",
-                    options=df_liga['Time'], 
-                    index=0 
+                    options=df_liga['Time'], # Usa a lista de times do DF já ordenado
+                    index=0 # Pega o primeiro time (o mais forte) por padrão
                 )
 
                 if time_para_simular:
+                    # 3. Pegar as forças do time selecionado
                     forcas_time = dados_cerebro_dc['forcas'][time_para_simular]
                     ataque_time = forcas_time['ataque']
                     defesa_time = forcas_time['defesa']
 
+                    # 4. Simular Jogos
+                    # Jogo 1: Time Selecionado (Casa) vs. Time Médio (Fora)
                     xg_casa_sim1 = np.exp(ataque_time + avg_defesa + vantagem_casa)
                     xg_fora_sim1 = np.exp(avg_ataque + defesa_time)
 
+                    # Jogo 2: Time Médio (Casa) vs. Time Selecionado (Fora)
                     xg_casa_sim2 = np.exp(avg_ataque + defesa_time + vantagem_casa)
                     xg_fora_sim2 = np.exp(ataque_time + avg_defesa)
 
+                    # 5. Exibir métricas
                     col1, col2 = st.columns(2)
                     with col1:
                         st.metric(
@@ -1099,12 +1070,14 @@ with tab_times:
                         )
                 
                 st.divider()
+                ### MELHORIA B - FIM ###
                 
+                ### MELHORIA A - INÍCIO (Ranking da Liga) ###
                 st.subheader(f"Ranking de Forças Completo (DC) - {emoji_liga_selecionada} {liga_selecionada_nome}")
                 st.info("Clique no título de uma coluna para ordenar. 'Força Geral' é a melhor métrica de ranking.")
                 
                 st.dataframe(
-                    df_liga, 
+                    df_liga, # Não precisa mais do .style.format
                     column_config={
                         "Time": "Time",
                         "Ataque": st.column_config.NumberColumn(
@@ -1131,17 +1104,23 @@ with tab_times:
         
         except Exception as e:
             st.error(f"Erro ao processar o ranking do cérebro DC: {e}")
+        ### MELHORIA A - FIM ###
     
+    # CASO 2: Cérebro POISSON está ativo
     elif MODO_CEREBRO == "POISSON_RECENTE" and df_historico_poisson is not None:
+        
+        ### MELHORIA C - INÍCIO (Dashboard de Forma Recente) ###
         st.subheader(f"📈 Análise de Forma Recente (Poisson) - {emoji_liga_selecionada} {liga_selecionada_nome}")
         st.info(f"Esta liga usa o Cérebro Poisson, que se baseia nos últimos 6 jogos. Veja abaixo as estatísticas de 'forma' de cada time.")
         
+        # 1. Pegar lista de times
         times_na_liga = pd.concat([df_historico_poisson['TimeCasa'], df_historico_poisson['TimeVisitante']]).unique()
-        times_na_liga.sort() 
+        times_na_liga.sort() # Ordenar alfabeticamente
         
         if len(times_na_liga) == 0:
             st.warning("Nenhum time encontrado no histórico desta liga.")
         else:
+            # 2. Selectbox para escolher o time
             time_selecionado = st.selectbox(
                 "Selecione um time para analisar a forma recente:",
                 options=times_na_liga,
@@ -1149,17 +1128,20 @@ with tab_times:
             )
             
             if time_selecionado:
-                num_jogos_recente = 6 
+                num_jogos_recente = 6 # Conforme usado na função de prever
                 
+                # 3. Filtrar os últimos 6 jogos (o DF já está ordenado por data)
                 jogos_casa_recente = df_historico_poisson[df_historico_poisson['TimeCasa'] == time_selecionado].tail(num_jogos_recente)
                 jogos_fora_recente = df_historico_poisson[df_historico_poisson['TimeVisitante'] == time_selecionado].tail(num_jogos_recente)
                 
+                # 4. Calcular médias, tratando se o DF for vazio (time novo)
                 gols_marcados_casa = jogos_casa_recente['GolsCasa'].mean() if not jogos_casa_recente.empty else 0.0
                 gols_sofridos_casa = jogos_casa_recente['GolsVisitante'].mean() if not jogos_casa_recente.empty else 0.0
                 
                 gols_marcados_fora = jogos_fora_recente['GolsVisitante'].mean() if not jogos_fora_recente.empty else 0.0
                 gols_sofridos_fora = jogos_fora_recente['GolsCasa'].mean() if not jogos_fora_recente.empty else 0.0
                 
+                # 5. Exibir métricas
                 st.markdown(f"**Análise de Forma (Baseada nos últimos {num_jogos_recente} jogos)**")
                 col1, col2 = st.columns(2)
                 
@@ -1175,6 +1157,7 @@ with tab_times:
                     
                 st.divider()
                 
+                # 6. (Opcional) Mostrar os jogos usados
                 with st.expander(f"Ver últimos {num_jogos_recente} jogos em casa usados no cálculo"):
                     if jogos_casa_recente.empty:
                         st.write(f"Nenhum jogo recente em casa encontrado no histórico para {time_selecionado}.")
@@ -1186,6 +1169,10 @@ with tab_times:
                         st.write(f"Nenhum jogo recente fora encontrado no histórico para {time_selecionado}.")
                     else:
                         st.dataframe(jogos_fora_recente[['data_jogo', 'TimeCasa', 'TimeVisitante', 'GolsCasa', 'GolsVisitante']].sort_values(by='data_jogo', ascending=False), use_container_width=True, hide_index=True)
+        ### MELHORIA C - FIM ###
 
+    # CASO 3: Nenhum cérebro carregado
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
+### MELHORIA 7 - FIM ###
+
