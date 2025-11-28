@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 8.0 - Integração com The-Odds-API)
-# UPGRADE: Busca automática de odds em tempo real para facilitar o preenchimento.
+# O Robô de Análise (Versão 8.1 - Full Automática)
+# UPGRADE: Busca automática de 1x2, Chance Dupla, Over 2.5 e Ambas Marcam.
 
 import streamlit as st
 import requests
@@ -20,7 +20,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô de Valor (BD + Odds)",
+    page_title="Robô de Valor (Auto)",
     page_icon="🤖", 
     layout="wide"
 )
@@ -91,7 +91,6 @@ st.markdown("""
         background-color: #3a3a4a;
     }
 
-
     /* Headers dos Expanders (st.expander) */
     [data-testid="stExpander"] > summary {
         background-color: #1F202B;
@@ -138,69 +137,109 @@ MAPA_LIGAS_ODDS = {
 
 def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     """
-    Busca odds automaticamente na The-Odds-API para preencher o formulário.
-    Usa 'Fuzzy Matching' para encontrar os times mesmo com nomes ligeiramente diferentes.
+    Busca odds automaticamente (1x2, Chance Dupla, Totals 2.5, BTTS).
+    PRIORIDADE: Tenta pegar odds da BETANO. Se não tiver, pega a primeira disponível.
     """
-    # 1. Verifica se temos mapeamento e chave
+    # 1. Configurações Iniciais
     sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_fd)
-    
-    # Tenta pegar a chave do config (seja do secrets ou env var)
     api_key_odds = getattr(config, 'THE_ODDS_API_KEY', None)
 
     if not sport_key or not api_key_odds:
-        # Se não tiver chave configurada ou liga mapeada, retorna silenciosamente
         return None 
 
+    # 2. Monta a Requisição
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
         'apiKey': api_key_odds,
-        'regions': 'eu', # Use 'eu' (Bet365, 1xBet, etc) ou 'uk'
-        'markets': 'h2h', # Apenas vencedor da partida por enquanto (Winner)
+        'regions': 'eu', # 'eu' geralmente inclui Betano
+        'markets': 'h2h,doublechance,totals,btts',
         'oddsFormat': 'decimal'
     }
 
     try:
-        response = requests.get(url, params=params, timeout=5)
+        response = requests.get(url, params=params, timeout=6)
         if response.status_code != 200: 
             return None
         
         dados = response.json()
         
+        # 3. Fuzzy Match (Encontrar o jogo certo)
         melhor_match = None
         maior_score = 0.0
         
-        # 2. Loop de Fuzzy Match para encontrar o jogo certo
         for jogo in dados:
             sim_casa = SequenceMatcher(None, time_casa_fd, jogo['home_team']).ratio()
             sim_visit = SequenceMatcher(None, time_visitante_fd, jogo['away_team']).ratio()
-            
-            # Média das similaridades
             media_score = (sim_casa + sim_visit) / 2
             
             if media_score > maior_score:
                 maior_score = media_score
                 melhor_match = jogo
         
-        # 3. Limite de aceitação de segurança (65%)
+        # 4. Extração de Odds
         if melhor_match and maior_score >= 0.65:
             bookmakers = melhor_match.get('bookmakers', [])
             if bookmakers:
-                # Pega a primeira casa disponível (ex: Pinnacle, 1xBet, Bet365)
-                # O ideal seria pegar a melhor odd, mas a primeira já serve como referência
-                book = bookmakers[0]
-                outcomes = book['markets'][0]['outcomes']
                 
-                # Extrai odds com segurança
-                odd_casa = next((i['price'] for i in outcomes if i['name'] == melhor_match['home_team']), None)
-                odd_fora = next((i['price'] for i in outcomes if i['name'] == melhor_match['away_team']), None)
-                odd_empate = next((i['price'] for i in outcomes if i['name'] == 'Draw'), None)
+                # --- LÓGICA DE PRIORIDADE BETANO ---
+                book = None
                 
-                return {
-                    'casa': odd_casa,
-                    'empate': odd_empate,
-                    'visitante': odd_fora,
-                    'casa_nome': book['title'] # Nome da casa (ex: 1xBet)
+                # Tenta encontrar a Betano na lista
+                for b in bookmakers:
+                    if b['key'] == 'betano':
+                        book = b
+                        break
+                
+                # Se não achou Betano, pega a primeira disponível (Fallback)
+                if not book:
+                    book = bookmakers[0]
+                # -----------------------------------
+
+                # Inicializa dicionário de resultados
+                resultados = {
+                    'casa_nome': book['title'], # Vai mostrar "Betano" se encontrou
+                    'casa': None, 'empate': None, 'visitante': None, # 1x2
+                    'dc_1x': None, 'dc_x2': None, 'dc_12': None,     # Chance Dupla
+                    'over_2_5': None,                                # Over 2.5
+                    'btts_sim': None                                 # Ambas Marcam
                 }
+                
+                # Itera sobre os mercados retornados
+                for mercado in book['markets']:
+                    
+                    # --- Mercado: Vencedor (1x2) ---
+                    if mercado['key'] == 'h2h':
+                        for outcome in mercado['outcomes']:
+                            if outcome['name'] == melhor_match['home_team']: resultados['casa'] = outcome['price']
+                            elif outcome['name'] == melhor_match['away_team']: resultados['visitante'] = outcome['price']
+                            elif outcome['name'] == 'Draw': resultados['empate'] = outcome['price']
+                    
+                    # --- Mercado: Chance Dupla ---
+                    elif mercado['key'] == 'doublechance':
+                        for outcome in mercado['outcomes']:
+                            nome_op = outcome['name'] 
+                            tem_casa = melhor_match['home_team'] in nome_op
+                            tem_fora = melhor_match['away_team'] in nome_op
+                            tem_empate = 'Draw' in nome_op
+                            
+                            if tem_casa and tem_empate: resultados['dc_1x'] = outcome['price']
+                            elif tem_fora and tem_empate: resultados['dc_x2'] = outcome['price']
+                            elif tem_casa and tem_fora: resultados['dc_12'] = outcome['price']
+                    
+                    # --- Mercado: Gols (Totals) - Filtra só Over 2.5 ---
+                    elif mercado['key'] == 'totals':
+                        for outcome in mercado['outcomes']:
+                            if outcome['name'] == 'Over' and outcome.get('point') == 2.5:
+                                resultados['over_2_5'] = outcome['price']
+                                
+                    # --- Mercado: Ambas Marcam (BTTS) ---
+                    elif mercado['key'] == 'btts':
+                        for outcome in mercado['outcomes']:
+                            if outcome['name'] == 'Yes':
+                                resultados['btts_sim'] = outcome['price']
+
+                return resultados
+
     except Exception as e:
         print(f"Erro silencioso ao buscar odds: {e}")
         return None
@@ -512,7 +551,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v8.0 - Integração com Odds API") 
+    st.caption("v8.1 - Auto (Odds+Gols+BTTS)") 
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -685,7 +724,7 @@ with tab_analise:
         chave_cache_odds = f"odds_{jogo['time_casa']}_{jogo['data_jogo']}"
         
         if chave_cache_odds not in st.session_state:
-            with st.spinner("🤖 Buscando odds nas casas de aposta..."):
+            with st.spinner("🤖 Buscando odds completas (1x2, Gols, Ambas Marcam)..."):
                 odds_encontradas = buscar_odds_automaticas(LIGA_ATUAL, jogo['time_casa'], jogo['time_visitante'])
                 if odds_encontradas:
                     st.session_state[chave_cache_odds] = odds_encontradas
@@ -710,10 +749,19 @@ with tab_analise:
 
             col_form1, col_form2 = st.columns(2)
 
-            # Define os valores padrão (Se tiver auto, usa auto. Se não, None)
+            # Define os valores padrão (1x2)
             val_casa = odds_auto['casa'] if odds_auto else None
             val_empate = odds_auto['empate'] if odds_auto else None
             val_visit = odds_auto['visitante'] if odds_auto else None
+            
+            # Novos valores padrão (Gols e BTTS)
+            val_over = odds_auto.get('over_2_5') if odds_auto else None
+            val_btts = odds_auto.get('btts_sim') if odds_auto else None
+            
+            # Novos valores padrão (Chance Dupla)
+            val_1x = odds_auto.get('dc_1x') if odds_auto else None
+            val_x2 = odds_auto.get('dc_x2') if odds_auto else None
+            val_12 = odds_auto.get('dc_12') if odds_auto else None
 
             with col_form1:
                 st.markdown("**📊 Resultado (1x2)**")
@@ -722,14 +770,14 @@ with tab_analise:
                 odd_visitante = st.number_input(f"{jogo['time_visitante']} (2)", min_value=1.0, value=val_visit, format="%.2f", key=f"visit_{i}")
                 
                 st.markdown("**⚽ Gols**")
-                odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=None, format="%.2f", key=f"over_{i}")
-                odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=None, format="%.2f", key=f"btts_{i}")
+                odd_over = st.number_input("Mais de 2.5 Gols", min_value=1.0, value=val_over, format="%.2f", key=f"over_{i}")
+                odd_btts = st.number_input("Ambas Marcam (Sim)", min_value=1.0, value=val_btts, format="%.2f", key=f"btts_{i}")
 
             with col_form2:
                 st.markdown("**🤝 Chance Dupla**")
-                odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=None, format="%.2f", key=f"dc1x_{i}")
-                odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=None, format="%.2f", key=f"dcx2_{i}")
-                odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=None, format="%.2f", key=f"dc12_{i}")
+                odd_1x = st.number_input("Casa/Empate (1X)", min_value=1.0, value=val_1x, format="%.2f", key=f"dc1x_{i}")
+                odd_x2 = st.number_input("Empate/Fora (X2)", min_value=1.0, value=val_x2, format="%.2f", key=f"dcx2_{i}")
+                odd_12 = st.number_input("Casa/Fora (12)", min_value=1.0, value=val_12, format="%.2f", key=f"dc12_{i}")
             
             st.divider()
 
