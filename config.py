@@ -17,4 +17,8 @@ MAX_GOLS_CALCULO = 6
 
 # --- CONFIGURAÇÃO DO TELEGRAM ---
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", os.environ.get("TELEGRAM_TOKEN"))
+
 TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", os.environ.get("TELEGRAM_CHAT_ID"))
+
+# Adicione no final do config.py
+THE_ODDS_API_KEY = st.secrets.get("THE_ODDS_API_KEY", "SUA_CHAVE_DA_API_AQUI")
