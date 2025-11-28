@@ -1,7 +1,7 @@
 # app.py
-# O Robô de Análise (Versão 8.3 - FULL RESTAURADA)
-# CORREÇÃO: Removemos 'doublechance' e 'btts' da busca automática para evitar Erro 422 na conta Grátis.
-# MANTIDO: Toda a estrutura original, design, aba de times e banco de dados.
+# O Robô de Análise (Versão 8.4 - Final Betano)
+# PRIORIDADE: Busca odds da BETANO primeiro.
+# SEGURANÇA: Busca apenas mercados permitidos (1x2 e Totals) para evitar travamento da API.
 
 import streamlit as st
 import requests
@@ -21,12 +21,12 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô de Valor (Full)",
+    page_title="Robô de Valor (Betano)",
     page_icon="🤖", 
     layout="wide"
 )
 
-### DESIGN CUSTOMIZADO (CSS ORIGINAL RESTAURADO) ###
+### DESIGN CUSTOMIZADO (CSS) ###
 st.markdown("""
 <style>
     /* Fundo principal da aplicação */
@@ -138,8 +138,9 @@ MAPA_LIGAS_ODDS = {
 
 def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     """
-    Busca odds automaticamente (Apenas 1x2 e Totals para evitar erro 422).
-    Estratégia: Prioriza Betano, senão pega a primeira disponível.
+    Busca odds automaticamente.
+    ESTRATÉGIA: Prioriza BETANO. Se falhar, usa fallback.
+    MERCADOS: Apenas 1x2 e Totals (seguro contra erro 422).
     """
     sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_fd)
     api_key_odds = getattr(config, 'THE_ODDS_API_KEY', None)
@@ -147,26 +148,24 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     if not sport_key or not api_key_odds:
         return None 
 
-    # --- CORREÇÃO DO ERRO 422 ---
-    # Removido 'doublechance' e 'btts' pois a API Free rejeita
+    # 1. Configura a busca (Apenas mercados seguros)
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
         'apiKey': api_key_odds,
-        'regions': 'eu',
-        'markets': 'h2h,totals', # Apenas mercados seguros
+        'regions': 'eu', # Betano costuma estar na região EU
+        'markets': 'h2h,totals', 
         'oddsFormat': 'decimal'
     }
 
     try:
         response = requests.get(url, params=params, timeout=6)
         if response.status_code != 200: 
-            # Log discreto no console do servidor para debug
-            print(f"Erro API Odds: {response.status_code} - {response.text}")
+            print(f"Erro API Odds: {response.status_code}")
             return None
         
         dados = response.json()
         
-        # Fuzzy Match
+        # 2. Fuzzy Match (Encontra o jogo certo)
         melhor_match = None
         maior_score = 0.0
         
@@ -179,18 +178,19 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
                 maior_score = media_score
                 melhor_match = jogo
         
+        # 3. Processamento das Odds
         if melhor_match and maior_score >= 0.65:
             bookmakers = melhor_match.get('bookmakers', [])
             if not bookmakers: return None
 
-            # Dicionário inicial (apenas o que podemos buscar)
+            # Dicionário inicial
             resultados = {
                 'casa_nome': 'Misto',
                 'casa': None, 'empate': None, 'visitante': None,
                 'over_2_5': None
-                # BTTS e Chance Dupla ficam como None pois a API Free não fornece
             }
 
+            # Função Helper para extrair odds de um bookmaker
             def extrair_dados(book, current_res):
                 novos = {}
                 for mercado in book['markets']:
@@ -204,27 +204,34 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
                     # Totals (Over 2.5)
                     elif mercado['key'] == 'totals':
                         for outcome in mercado['outcomes']:
-                            # Garante que é numérico
                             ponto = float(outcome.get('point', 0))
                             if outcome['name'] == 'Over' and ponto == 2.5:
                                 novos['over_2_5'] = outcome['price']
                 return novos
 
-            # 1. Tenta Betano
+            # --- ESTRATÉGIA PRIORIDADE BETANO ---
+            
+            # 1. Procura Betano explicitamente
             betano_book = next((b for b in bookmakers if b['key'] == 'betano'), None)
+            
             if betano_book:
+                # Se achou Betano, pega tudo dela!
                 dados_betano = extrair_dados(betano_book, resultados)
                 resultados.update(dados_betano)
                 resultados['casa_nome'] = 'Betano'
             
-            # 2. Preenche lacunas com outros
+            # 2. Se a Betano falhou ou faltaram dados (Lacunas), completa com os outros
             if resultados['casa'] is None or resultados['over_2_5'] is None:
                 for book in bookmakers:
-                    if book['key'] == 'betano': continue
+                    if book['key'] == 'betano': continue # Já tentamos Betano
+                    
                     dados_extras = extrair_dados(book, resultados)
+                    
+                    # Só preenche o que ainda está vazio
                     for k, v in dados_extras.items():
                         if resultados.get(k) is None and v is not None:
                             resultados[k] = v
+                            # Se não tinha nome definido ainda, pega o desse book
                             if resultados['casa_nome'] == 'Misto': resultados['casa_nome'] = book['title']
 
             if resultados['casa'] is None: return None
@@ -540,7 +547,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v8.3 - Full + Fix 422") 
+    st.caption("v8.4 - Betano + Safety Fix") 
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -713,7 +720,7 @@ with tab_analise:
         chave_cache_odds = f"odds_{jogo['time_casa']}_{jogo['data_jogo']}"
         
         if chave_cache_odds not in st.session_state:
-            with st.spinner("🤖 Buscando odds (Apenas 1x2 e Totals para evitar erro)..."):
+            with st.spinner("🤖 Buscando odds (Prioridade Betano)..."):
                 odds_encontradas = buscar_odds_automaticas(LIGA_ATUAL, jogo['time_casa'], jogo['time_visitante'])
                 if odds_encontradas:
                     st.session_state[chave_cache_odds] = odds_encontradas
@@ -734,7 +741,9 @@ with tab_analise:
             
             st.subheader("Inserir Odds do Jogo")
             if odds_auto:
-                st.caption(f"✨ Preenchido automaticamente com odds da **{odds_auto['casa_nome']}** (Chance Dupla e BTTS não disponíveis na API Free)")
+                nome_casa = odds_auto.get('casa_nome', 'Auto')
+                st.success(f"✨ Preenchido automaticamente com odds da **{nome_casa}**")
+                st.caption("Nota: Chance Dupla e BTTS não disponíveis na API Free (preencher manual)")
 
             col_form1, col_form2 = st.columns(2)
 
