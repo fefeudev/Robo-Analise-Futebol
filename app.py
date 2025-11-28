@@ -137,8 +137,7 @@ MAPA_LIGAS_ODDS = {
 
 def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     """
-    Busca odds automaticamente (1x2, Chance Dupla, Totals 2.5, BTTS).
-    PRIORIDADE: Tenta pegar odds da BETANO. Se não tiver, pega a primeira disponível.
+    Busca odds automaticamente (1x2, Chance Dupla, Totals 2.5, BTTS)
     """
     # 1. Configurações Iniciais
     sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_fd)
@@ -147,17 +146,17 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     if not sport_key or not api_key_odds:
         return None 
 
-    # 2. Monta a Requisição
+    # 2. Monta a Requisição (Pedindo todos os mercados)
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
         'apiKey': api_key_odds,
-        'regions': 'eu', # 'eu' geralmente inclui Betano
-        'markets': 'h2h,doublechance,totals,btts',
+        'regions': 'eu', # Casas Europeias (Bet365, Pinnacle, 1xBet...)
+        'markets': 'h2h,doublechance,totals,btts', # <--- TODOS OS MERCADOS AQUI
         'oddsFormat': 'decimal'
     }
 
     try:
-        response = requests.get(url, params=params, timeout=6)
+        response = requests.get(url, params=params, timeout=6) # Timeout levemente maior
         if response.status_code != 200: 
             return None
         
@@ -176,28 +175,16 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
                 maior_score = media_score
                 melhor_match = jogo
         
-        # 4. Extração de Odds
+        # 4. Extração de Odds (Se o match for bom)
         if melhor_match and maior_score >= 0.65:
             bookmakers = melhor_match.get('bookmakers', [])
             if bookmakers:
+                # Pega a primeira casa disponível
+                book = bookmakers[0]
                 
-                # --- LÓGICA DE PRIORIDADE BETANO ---
-                book = None
-                
-                # Tenta encontrar a Betano na lista
-                for b in bookmakers:
-                    if b['key'] == 'betano':
-                        book = b
-                        break
-                
-                # Se não achou Betano, pega a primeira disponível (Fallback)
-                if not book:
-                    book = bookmakers[0]
-                # -----------------------------------
-
                 # Inicializa dicionário de resultados
                 resultados = {
-                    'casa_nome': book['title'], # Vai mostrar "Betano" se encontrou
+                    'casa_nome': book['title'],
                     'casa': None, 'empate': None, 'visitante': None, # 1x2
                     'dc_1x': None, 'dc_x2': None, 'dc_12': None,     # Chance Dupla
                     'over_2_5': None,                                # Over 2.5
@@ -217,7 +204,8 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
                     # --- Mercado: Chance Dupla ---
                     elif mercado['key'] == 'doublechance':
                         for outcome in mercado['outcomes']:
-                            nome_op = outcome['name'] 
+                            nome_op = outcome['name'] # Ex: "Man City/Draw"
+                            # Lógica segura de strings
                             tem_casa = melhor_match['home_team'] in nome_op
                             tem_fora = melhor_match['away_team'] in nome_op
                             tem_empate = 'Draw' in nome_op
@@ -229,6 +217,7 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
                     # --- Mercado: Gols (Totals) - Filtra só Over 2.5 ---
                     elif mercado['key'] == 'totals':
                         for outcome in mercado['outcomes']:
+                            # Procura especificamente linha 2.5 e nome Over
                             if outcome['name'] == 'Over' and outcome.get('point') == 2.5:
                                 resultados['over_2_5'] = outcome['price']
                                 
