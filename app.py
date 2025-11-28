@@ -1,7 +1,7 @@
 # app.py
-# O Robô de Análise (Versão 8.4 - Final Betano)
-# PRIORIDADE: Busca odds da BETANO primeiro.
-# SEGURANÇA: Busca apenas mercados permitidos (1x2 e Totals) para evitar travamento da API.
+# O Robô de Análise (Versão 8.5 - Hierarquia de Confiança)
+# CORREÇÃO: Busca apenas mercados seguros (1x2 + Totals) para evitar erro 422.
+# INTELIGÊNCIA: Se não achar Betano, busca 1xBet ou Pinnacle (nesta ordem).
 
 import streamlit as st
 import requests
@@ -12,7 +12,7 @@ import config
 import time
 from datetime import datetime, timedelta
 import json
-from difflib import SequenceMatcher # Necessário para comparar nomes de times
+from difflib import SequenceMatcher 
 
 # --- NOVOS IMPORTS DO BANCO DE DADOS ---
 import gspread
@@ -21,7 +21,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô de Valor (Betano)",
+    page_title="Robô de Valor (Smart)",
     page_icon="🤖", 
     layout="wide"
 )
@@ -29,79 +29,16 @@ st.set_page_config(
 ### DESIGN CUSTOMIZADO (CSS) ###
 st.markdown("""
 <style>
-    /* Fundo principal da aplicação */
-    .stApp {
-        background-color: #0A0A1A; /* Fundo mais escuro */
-    }
-
-    /* Cor de fundo da sidebar */
-    [data-testid="stSidebar"] {
-        background-color: #0F1116; /* Um pouco mais claro que o fundo */
-        border-right: 1px solid #2a2a3a;
-    }
-
-    /* Título Principal (H1) */
-    [data-testid="stAppViewContainer"] > h1 {
-        color: #FAFAFA;
-        font-weight: 600;
-    }
-    
-    /* Títulos de Seção (H2 - st.header) */
-    h2 {
-        color: #FAFAFA;
-    }
-
-    /* Títulos de Sub-seção (H3 - st.subheader) */
-    h3 {
-        color: #4A90E2; /* Azul profissional */
-        font-weight: 600;
-    }
-
-    /* Cards de Métrica (st.metric) */
-    [data-testid="stMetric"] {
-        background-color: #1F202B;
-        border: 1px solid #333344;
-        border-radius: 10px;
-        padding: 15px;
-    }
-    
-    /* Labels das Métricas */
-    [data-testid="stMetricLabel"] {
-        color: #AAAAEE; /* Um roxo/azul claro */
-    }
-
-    /* Botões */
-    [data-testid="stButton"] > button {
-        border-radius: 8px;
-        background-color: #4A90E2;
-        color: white;
-        border: none;
-        font-weight: 600;
-    }
-    [data-testid="stButton"] > button:hover {
-        background-color: #3A70C1; /* Um pouco mais escuro no hover */
-        color: white;
-        border: none;
-    }
-    
-    /* Botões de data da sidebar (para não ficarem azuis) */
-    [data-testid="stSidebar"] [data-testid="stButton"] > button {
-        background-color: #2a2a3a;
-    }
-    [data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
-        background-color: #3a3a4a;
-    }
-
-    /* Headers dos Expanders (st.expander) */
-    [data-testid="stExpander"] > summary {
-        background-color: #1F202B;
-        border-radius: 8px;
-        border: 1px solid #333344;
-    }
-    [data-testid="stExpander"] > summary:hover {
-        background-color: #2a2a3a;
-    }
-
+    .stApp { background-color: #0A0A1A; }
+    [data-testid="stSidebar"] { background-color: #0F1116; border-right: 1px solid #2a2a3a; }
+    [data-testid="stAppViewContainer"] > h1, h2 { color: #FAFAFA; font-weight: 600; }
+    h3 { color: #4A90E2; font-weight: 600; }
+    [data-testid="stMetric"] { background-color: #1F202B; border: 1px solid #333344; border-radius: 10px; padding: 15px; }
+    [data-testid="stMetricLabel"] { color: #AAAAEE; }
+    [data-testid="stButton"] > button { border-radius: 8px; background-color: #4A90E2; color: white; border: none; font-weight: 600; }
+    [data-testid="stButton"] > button:hover { background-color: #3A70C1; color: white; border: none; }
+    [data-testid="stSidebar"] [data-testid="stButton"] > button { background-color: #2a2a3a; }
+    [data-testid="stExpander"] > summary { background-color: #1F202B; border-radius: 8px; border: 1px solid #333344; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,10 +59,9 @@ def fazer_requisicao_api(endpoint, params):
 
 # --- FUNÇÕES DA NOVA API DE ODDS (The-Odds-API) ---
 
-# Mapa: Código do Football-Data -> Código da The-Odds-API
 MAPA_LIGAS_ODDS = {
     "BSA": "soccer_brazil_campeonato",
-    "PL": "soccer_epl", # Premier League
+    "PL": "soccer_epl", 
     "CL": "soccer_uefa_champs_league",
     "PD": "soccer_spain_la_liga",
     "SA": "soccer_italy_serie_a",
@@ -133,13 +69,13 @@ MAPA_LIGAS_ODDS = {
     "FL1": "soccer_france_ligue_one",
     "DED": "soccer_netherlands_eredivisie",
     "PPL": "soccer_portugal_primeira_liga",
-    "ELC": "soccer_efl_champ" # Championship
+    "ELC": "soccer_efl_champ" 
 }
 
 def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     """
     Busca odds automaticamente.
-    ESTRATÉGIA: Prioriza BETANO. Se falhar, usa fallback.
+    ESTRATÉGIA: Hierarquia de Confiança (Betano > 1xBet > Pinnacle > Betfair > Qualquer uma).
     MERCADOS: Apenas 1x2 e Totals (seguro contra erro 422).
     """
     sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_fd)
@@ -152,7 +88,7 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
     params = {
         'apiKey': api_key_odds,
-        'regions': 'eu', # Betano costuma estar na região EU
+        'regions': 'eu', # Traz 1xBet, Pinnacle, Betfair, etc.
         'markets': 'h2h,totals', 
         'oddsFormat': 'decimal'
     }
@@ -160,6 +96,7 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
     try:
         response = requests.get(url, params=params, timeout=6)
         if response.status_code != 200: 
+            # Log discreto
             print(f"Erro API Odds: {response.status_code}")
             return None
         
@@ -183,15 +120,32 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
             bookmakers = melhor_match.get('bookmakers', [])
             if not bookmakers: return None
 
-            # Dicionário inicial
+            # --- HIERARQUIA DE ESCOLHA ---
+            # Define a ordem de preferência das casas
+            ordem_prioridade = ['betano', 'onexbet', 'pinnacle', 'betfair_ex_eu', 'bet365']
+            
+            book_escolhido = None
+            
+            # Tenta encontrar na ordem
+            for chave_preferida in ordem_prioridade:
+                # Procura se alguma casa na lista tem essa chave
+                candidato = next((b for b in bookmakers if chave_preferida in b['key']), None)
+                if candidato:
+                    book_escolhido = candidato
+                    break
+            
+            # Se não achou nenhuma das preferidas, pega a primeira da lista
+            if not book_escolhido:
+                book_escolhido = bookmakers[0]
+
+            # --- EXTRAÇÃO DE DADOS ---
             resultados = {
-                'casa_nome': 'Misto',
+                'casa_nome': book_escolhido['title'],
                 'casa': None, 'empate': None, 'visitante': None,
                 'over_2_5': None
             }
 
-            # Função Helper para extrair odds de um bookmaker
-            def extrair_dados(book, current_res):
+            def extrair_dados_do_book(book, current_res):
                 novos = {}
                 for mercado in book['markets']:
                     # 1x2
@@ -209,30 +163,22 @@ def buscar_odds_automaticas(codigo_liga_fd, time_casa_fd, time_visitante_fd):
                                 novos['over_2_5'] = outcome['price']
                 return novos
 
-            # --- ESTRATÉGIA PRIORIDADE BETANO ---
-            
-            # 1. Procura Betano explicitamente
-            betano_book = next((b for b in bookmakers if b['key'] == 'betano'), None)
-            
-            if betano_book:
-                # Se achou Betano, pega tudo dela!
-                dados_betano = extrair_dados(betano_book, resultados)
-                resultados.update(dados_betano)
-                resultados['casa_nome'] = 'Betano'
-            
-            # 2. Se a Betano falhou ou faltaram dados (Lacunas), completa com os outros
+            # Extrai do escolhido
+            dados_principais = extrair_dados_do_book(book_escolhido, resultados)
+            resultados.update(dados_principais)
+
+            # ESTRATÉGIA DE LACUNAS (Se faltar Over 2.5, pega de outro lugar)
             if resultados['casa'] is None or resultados['over_2_5'] is None:
                 for book in bookmakers:
-                    if book['key'] == 'betano': continue # Já tentamos Betano
+                    if book['key'] == book_escolhido['key']: continue
                     
-                    dados_extras = extrair_dados(book, resultados)
-                    
-                    # Só preenche o que ainda está vazio
+                    dados_extras = extrair_dados_do_book(book, resultados)
                     for k, v in dados_extras.items():
                         if resultados.get(k) is None and v is not None:
                             resultados[k] = v
-                            # Se não tinha nome definido ainda, pega o desse book
-                            if resultados['casa_nome'] == 'Misto': resultados['casa_nome'] = book['title']
+                            # Se a casa principal estava vazia de tudo, muda o nome para a secundária
+                            if resultados['casa'] is None and k == 'casa':
+                                resultados['casa_nome'] = book['title']
 
             if resultados['casa'] is None: return None
             return resultados
@@ -547,7 +493,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v8.4 - Betano + Safety Fix") 
+    st.caption("v8.5 - Smart Odds") 
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -720,7 +666,7 @@ with tab_analise:
         chave_cache_odds = f"odds_{jogo['time_casa']}_{jogo['data_jogo']}"
         
         if chave_cache_odds not in st.session_state:
-            with st.spinner("🤖 Buscando odds (Prioridade Betano)..."):
+            with st.spinner("🤖 Buscando odds (Prioridade Betano > 1xBet > Pinnacle)..."):
                 odds_encontradas = buscar_odds_automaticas(LIGA_ATUAL, jogo['time_casa'], jogo['time_visitante'])
                 if odds_encontradas:
                     st.session_state[chave_cache_odds] = odds_encontradas
