@@ -1,0 +1,152 @@
+{
+    "liga": "CL",
+    "temporada": 2025,
+    "data_treinamento": "2025-12-02T00:22:24.083906",
+    "vantagem_casa": 0.3201654930957513,
+    "forcas": {
+        "AFC Ajax": {
+            "ataque": -0.8135928813127654,
+            "defesa": 0.023052574350928456
+        },
+        "AS Monaco FC": {
+            "ataque": 0.877493340400744,
+            "defesa": -0.8882125881693477
+        },
+        "Arsenal FC": {
+            "ataque": 1.8262099004342058,
+            "defesa": -2.902523320301396
+        },
+        "Atalanta BC": {
+            "ataque": 0.7900138103272364,
+            "defesa": -1.9058095973011706
+        },
+        "Athletic Club": {
+            "ataque": 0.42197946877460624,
+            "defesa": -1.0813572355194014
+        },
+        "Bayer 04 Leverkusen": {
+            "ataque": 1.1718713882756466,
+            "defesa": -1.0377041775933815
+        },
+        "Borussia Dortmund": {
+            "ataque": 1.8853671231014166,
+            "defesa": -0.23906112576444877
+        },
+        "Chelsea FC": {
+            "ataque": 1.2923117583047452,
+            "defesa": -1.3909898226249169
+        },
+        "Club Atlético de Madrid": {
+            "ataque": 1.496312163229413,
+            "defesa": -0.7646575520552545
+        },
+        "Club Brugge KV": {
+            "ataque": 1.6098010727575334,
+            "defesa": -0.7719590502867104
+        },
+        "Eintracht Frankfurt": {
+            "ataque": 1.054773451959043,
+            "defesa": -0.10918786054732789
+        },
+        "FC Barcelona": {
+            "ataque": 1.7684069377136942,
+            "defesa": -1.215822269742973
+        },
+        "FC Bayern München": {
+            "ataque": 2.1525654784644574,
+            "defesa": -1.8387462536668036
+        },
+        "FC Internazionale Milano": {
+            "ataque": 1.1896418469956074,
+            "defesa": -1.4169883411192068
+        },
+        "FC København": {
+            "ataque": 0.6612102855147596,
+            "defesa": -0.37575363950885493
+        },
+        "FK Bodø/Glimt": {
+            "ataque": 1.001782561949066,
+            "defesa": -0.1424447910379843
+        },
+        "FK Kairat": {
+            "ataque": 0.6237464059328123,
+            "defesa": -0.2668200552657633
+        },
+        "Galatasaray SK": {
+            "ataque": 0.6116545265789953,
+            "defesa": -0.6135375123995037
+        },
+        "Juventus FC": {
+            "ataque": 1.1652479928834005,
+            "defesa": -0.7611768118985621
+        },
+        "Liverpool FC": {
+            "ataque": 1.145839515332589,
+            "defesa": -0.946699638794399
+        },
+        "Manchester City FC": {
+            "ataque": 1.1912165747843115,
+            "defesa": -1.1499490934304095
+        },
+        "Newcastle United FC": {
+            "ataque": 1.5713443444617723,
+            "defesa": -1.384887515495706
+        },
+        "Olympique de Marseille": {
+            "ataque": 1.1500845649514455,
+            "defesa": -1.136266835352518
+        },
+        "PAE Olympiakos SFP": {
+            "ataque": 0.9691110740875623,
+            "defesa": -0.7518506232375515
+        },
+        "PSV": {
+            "ataque": 1.6856205569585843,
+            "defesa": -0.737908955660122
+        },
+        "Paphos FC": {
+            "ataque": 0.4365594805754356,
+            "defesa": -0.9305606306769432
+        },
+        "Paris Saint-Germain FC": {
+            "ataque": 2.595607192109707,
+            "defesa": -1.1746396502401795
+        },
+        "Qarabağ Ağdam FK": {
+            "ataque": 1.1630524953206822,
+            "defesa": -0.27303267299035844
+        },
+        "Real Madrid CF": {
+            "ataque": 1.4891935765752233,
+            "defesa": -1.1893913947499573
+        },
+        "Royale Union Saint-Gilloise": {
+            "ataque": 0.81624546675075,
+            "defesa": -0.7002891799221388
+        },
+        "SK Slavia Praha": {
+            "ataque": -0.10090678781147938,
+            "defesa": -0.8276699978119122
+        },
+        "SSC Napoli": {
+            "ataque": 0.5372434960360662,
+            "defesa": -0.892012504405838
+        },
+        "Sport Lisboa e Benfica": {
+            "ataque": 0.26810656935450417,
+            "defesa": -0.8589173996250297
+        },
+        "Sporting Clube de Portugal": {
+            "ataque": 1.2992079808930086,
+            "defesa": -1.2478550235861379
+        },
+        "Tottenham Hotspur FC": {
+            "ataque": 1.1774650342238293,
+            "defesa": -1.3961825309245735
+        },
+        "Villarreal CF": {
+            "ataque": -0.2722171671517871,
+            "defesa": -0.792690567329052
+        }
+    }
+}
