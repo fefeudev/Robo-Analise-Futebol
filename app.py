@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v9.3 - Limpo: Placar Exato + Resumo Backtest + Kelly)
+# app.py - Robô de Valor (v10.0 - Radar de Preço Justo / Lista de Compras)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -197,7 +197,7 @@ def check_result(probs, score_home, score_away, min_prob):
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v9.3")
+    st.title("🤖 Robô v10.0")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -290,22 +290,44 @@ with t_jogos:
             st.warning("Nenhuma entrada clara encontrada neste dia (com os filtros atuais).")
     # ---------------------------------------------
     
-    # RADAR (Só aparece se NÃO for backtest)
+    # --- RADAR DE PREÇO JUSTO (LISTA DE COMPRAS) ---
     if matches and not MODO_BACKTEST:
-        with st.expander("📡 Escanear Oportunidades do Dia (Radar)", expanded=False):
-            if st.button("Buscar Melhores Jogos"):
-                radar_results = []
-                with st.spinner("Analisando..."):
-                    for m in matches:
-                        p, x = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
-                        if p:
-                            if p['vitoria_casa'] > 0.65: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Favorito Casa', 'Prob': p['vitoria_casa']})
-                            if p['vitoria_visitante'] > 0.65: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Favorito Fora', 'Prob': p['vitoria_visitante']})
-                            if p['over_2_5'] > 0.60: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Tendência Gols', 'Prob': p['over_2_5']})
-                            if p['btts_sim'] > 0.60: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Ambas Marcam', 'Prob': p['btts_sim']})
-                if radar_results:
-                    st.dataframe(pd.DataFrame(radar_results).sort_values('Prob', ascending=False), hide_index=True, use_container_width=True, column_config={"Prob": st.column_config.ProgressColumn("Probabilidade", format="%.1f%%", min_value=0, max_value=1)})
-                else: st.info("Nenhuma oportunidade >60% encontrada.")
+        with st.expander("🛒 Radar de Preço Justo (Lista de Compras)", expanded=True):
+            st.info("💡 **Como usar:** Se a odd na Bet365 for MAIOR que o 'Preço Justo' abaixo, é uma aposta de valor.")
+            radar_results = []
+            with st.spinner("Calculando preços justos..."):
+                for m in matches:
+                    p, x = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
+                    if p:
+                        # Calcula Odd Justa (1 / Probabilidade)
+                        odd_justa_casa = 1 / p['vitoria_casa'] if p['vitoria_casa'] > 0 else 99
+                        odd_justa_fora = 1 / p['vitoria_visitante'] if p['vitoria_visitante'] > 0 else 99
+                        odd_justa_over = 1 / p['over_2_5'] if p['over_2_5'] > 0 else 99
+                        odd_justa_btts = 1 / p['btts_sim'] if p['btts_sim'] > 0 else 99
+
+                        # Filtra apenas o que tem boa probabilidade para não poluir
+                        if p['vitoria_casa'] > 0.50: 
+                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Mercado': 'Casa Vence', 'Prob': p['vitoria_casa'], 'Preço Justo': f"@{odd_justa_casa:.2f}"})
+                        if p['vitoria_visitante'] > 0.50: 
+                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Mercado': 'Fora Vence', 'Prob': p['vitoria_visitante'], 'Preço Justo': f"@{odd_justa_fora:.2f}"})
+                        if p['over_2_5'] > 0.55: 
+                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Mercado': 'Over 2.5', 'Prob': p['over_2_5'], 'Preço Justo': f"@{odd_justa_over:.2f}"})
+                        if p['btts_sim'] > 0.55: 
+                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Mercado': 'BTTS (Sim)', 'Prob': p['btts_sim'], 'Preço Justo': f"@{odd_justa_btts:.2f}"})
+
+            if radar_results:
+                df_radar = pd.DataFrame(radar_results).sort_values('Prob', ascending=False)
+                st.dataframe(
+                    df_radar, 
+                    hide_index=True, 
+                    use_container_width=True, 
+                    column_config={
+                        "Prob": st.column_config.ProgressColumn("Confiança", format="%.0f%%", min_value=0, max_value=1),
+                        "Preço Justo": st.column_config.TextColumn("🎯 Odd Justa (Min)", help="Aposte se a casa pagar MAIS que isso.")
+                    }
+                )
+            else: st.caption("Nenhum 'favorito claro' (>50%) para gerar lista de compras hoje.")
+    # ----------------------------------------------------
 
     # LISTA DE JOGOS
     if 'sel_game' not in st.session_state:
