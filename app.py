@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v10.1 - Raio-X da Liga + Export + Lista de Compras)
+# app.py - Robô de Valor (v10.0 - Lista de Compras + Backtest + Kelly + Placar Exato)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -77,35 +77,13 @@ def get_standings(lid, season):
 
 @st.cache_data
 def get_historical_data(liga, temp):
-    """Baixa histórico para Poisson, Forma e Stats da Liga"""
+    """Baixa histórico para Poisson e Forma"""
     data = req_api(f"competitions/{liga}/matches", {"season": str(temp), "status": "FINISHED"})
     if not data or not data.get("matches"): return None, None
     matches = [{'data_jogo': m['utcDate'][:10], 'TimeCasa': m['homeTeam']['name'], 'TimeVisitante': m['awayTeam']['name'], 'GolsCasa': int(m['score']['fullTime']['home']), 'GolsVisitante': int(m['score']['fullTime']['away'])} for m in data['matches'] if m['score']['fullTime']['home'] is not None]
     df = pd.DataFrame(matches).sort_values('data_jogo')
     df['data_jogo'] = pd.to_datetime(df['data_jogo'])
     return df, {'media_gols_casa': df['GolsCasa'].mean(), 'media_gols_visitante': df['GolsVisitante'].mean()}
-
-def get_league_insights(df):
-    """Calcula estatísticas gerais da liga (Raio-X)"""
-    if df is None or df.empty: return None
-    total_jogos = len(df)
-    
-    # Over 2.5
-    over25 = len(df[(df['GolsCasa'] + df['GolsVisitante']) > 2.5])
-    pct_over = over25 / total_jogos
-    
-    # BTTS
-    btts = len(df[(df['GolsCasa'] > 0) & (df['GolsVisitante'] > 0)])
-    pct_btts = btts / total_jogos
-    
-    # Média Gols
-    avg_goals = (df['GolsCasa'].sum() + df['GolsVisitante'].sum()) / total_jogos
-    
-    # Mandante
-    home_wins = len(df[df['GolsCasa'] > df['GolsVisitante']])
-    pct_home = home_wins / total_jogos
-    
-    return {'over': pct_over, 'btts': pct_btts, 'avg': avg_goals, 'home': pct_home}
 
 def get_form_str(team, df):
     """Gera a string de forma (ex: ✅❌➖)"""
@@ -129,6 +107,7 @@ def calc_probs(l_casa, m_visit, rho=0.0):
     probs = np.zeros((7, 7))
     max_prob = 0
     placar_provavel = (0, 0)
+    
     for i in range(7):
         for j in range(7):
             tau = 1.0
@@ -138,9 +117,12 @@ def calc_probs(l_casa, m_visit, rho=0.0):
             elif i==1 and j==1: tau = 1 - rho
             val = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
             probs[i, j] = val
+            
+            # Detecta o placar mais provável
             if val > max_prob:
                 max_prob = val
                 placar_provavel = (i, j)
+                
     total = np.sum(probs)
     if total == 0: return None
     home = np.sum(np.tril(probs, -1))
@@ -152,6 +134,7 @@ def calc_probs(l_casa, m_visit, rho=0.0):
         for j in range(7):
             if i+j > 2.5: over += probs[i,j]
             if i>0 and j>0: btts += probs[i,j]
+            
     return {
         'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
         'over_2_5': over/total, 'btts_sim': btts/total,
@@ -187,9 +170,10 @@ def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_gam
     except: return None, None
 
 def check_result(probs, score_home, score_away, min_prob):
-    """Backtest"""
+    """Backtest verification"""
     results = []
     is_green_game = False
+    
     winner = "Casa" if score_home > score_away else ("Fora" if score_away > score_home else "Empate")
     if probs['vitoria_casa'] > min_prob:
         status = "✅" if winner == "Casa" else "❌"
@@ -199,17 +183,19 @@ def check_result(probs, score_home, score_away, min_prob):
         status = "✅" if winner == "Fora" else "❌"
         results.append(f"{status} Fora")
         if status == "✅": is_green_game = True
+        
     total_gols = score_home + score_away
     if probs['over_2_5'] > min_prob:
         status = "✅" if total_gols > 2.5 else "❌"
         results.append(f"{status} Over")
         if status == "✅": is_green_game = True
+        
     return results, is_green_game
 
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v10.1")
+    st.title("🤖 Robô v10.0")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -222,7 +208,7 @@ with st.sidebar:
     if st.button("Hoje (Manaus)"): st.session_state.dt_sel = datetime.now(FUSO).date()
     
     st.divider()
-    MODO_BACKTEST = st.toggle("🔙 Modo Backtesting", value=False)
+    MODO_BACKTEST = st.toggle("🔙 Modo Backtesting (Passado)", value=False)
     if MODO_BACKTEST: st.warning("⚠️ Backtest ATIVO.")
     st.divider()
     st.header("💰 Gestão de Banca")
@@ -244,18 +230,6 @@ t_jogos, t_hist, t_times = st.tabs(["Jogos", "Histórico", "Times"])
 with t_jogos:
     st.subheader(f"{EMOJIS.get(LIGA_ID,'')} {LIGA_KEY} - {MODE}")
     
-    # --- NOVO: RAIO-X DA LIGA ---
-    if df_history is not None and not MODO_BACKTEST:
-        stats_liga = get_league_insights(df_history)
-        if stats_liga:
-            with st.expander("📊 Raio-X da Liga (Estatísticas Gerais)", expanded=False):
-                cl1, cl2, cl3, cl4 = st.columns(4)
-                cl1.metric("Média Gols/Jogo", f"{stats_liga['avg']:.2f}")
-                cl2.metric("Over 2.5 (%)", f"{stats_liga['over']:.1%}")
-                cl3.metric("BTTS (Sim) (%)", f"{stats_liga['btts']:.1%}")
-                cl4.metric("Vitórias Casa (%)", f"{stats_liga['home']:.1%}")
-    # ----------------------------
-    
     @st.cache_data(ttl=300)
     def get_matches(lid, dtarget, is_backtest):
         d1 = dtarget.strftime('%Y-%m-%d')
@@ -267,7 +241,12 @@ with t_jogos:
         for m in res['matches']:
             dt_loc = pytz.utc.localize(datetime.strptime(m['utcDate'], "%Y-%m-%dT%H:%M:%SZ")).astimezone(FUSO)
             if dt_loc.date() == dtarget:
-                item = {'hora': dt_loc.strftime('%H:%M'), 'casa': m['homeTeam']['name'], 'fora': m['awayTeam']['name'], 'dt_iso': dt_loc.strftime('%Y-%m-%d')}
+                item = {
+                    'hora': dt_loc.strftime('%H:%M'), 
+                    'casa': m['homeTeam']['name'], 
+                    'fora': m['awayTeam']['name'], 
+                    'dt_iso': dt_loc.strftime('%Y-%m-%d')
+                }
                 if is_backtest and m['score']['fullTime']['home'] is not None:
                     item['placar_casa'] = m['score']['fullTime']['home']
                     item['placar_fora'] = m['score']['fullTime']['away']
@@ -282,7 +261,10 @@ with t_jogos:
     
     # --- RESUMO BACKTEST ---
     if MODO_BACKTEST and matches:
-        total_greens, total_reds, total_entradas = 0, 0, 0
+        total_greens = 0
+        total_reds = 0
+        total_entradas = 0
+        
         for m in matches:
             if 'placar_casa' in m:
                 p, _ = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
@@ -292,11 +274,15 @@ with t_jogos:
                         total_entradas += 1
                         if is_green: total_greens += 1
                         else: total_reds += 1
+        
         if total_entradas > 0:
             assertiv = (total_greens / total_entradas) * 100
             st.success(f"📊 **Simulação:** {total_greens} Greens ✅ | {total_reds} Reds ❌ | Assertividade: **{assertiv:.1f}%**")
+        else:
+            st.warning("Nenhuma entrada clara encontrada neste dia (com os filtros atuais).")
+    # -----------------------
     
-    # --- LISTA DE COMPRAS (RADAR) ---
+    # --- LISTA DE COMPRAS (RADAR ODD JUSTA) ---
     if matches and not MODO_BACKTEST:
         with st.expander("🛒 Lista de Compras (Odd Justa)", expanded=True):
             st.info(f"💡 DICA: Aposte se a casa pagar MAIS que a 'Odd Justa'. (Filtro > {min_prob*100:.0f}%)")
@@ -330,17 +316,12 @@ with t_jogos:
                     column_config={"Confiança": st.column_config.ProgressColumn("Confiança", format="%.0f%%", min_value=0, max_value=1)}
                 )
                 
-                c_btn1, c_btn2 = st.columns(2)
-                if c_btn1.button("✈️ Enviar Telegram"):
+                if st.button("✈️ Enviar Telegram"):
                     if config.TELEGRAM_TOKEN: 
                         requests.get(f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage", params={'chat_id': config.TELEGRAM_CHAT_ID, 'text': telegram_radar_txt, 'parse_mode': 'Markdown'})
                         st.success("Enviado!")
-                
-                # --- NOVO: EXPORTAR PARA CSV ---
-                csv = df_radar.to_csv(index=False).encode('utf-8')
-                c_btn2.download_button("📥 Baixar Lista (CSV)", data=csv, file_name=f"lista_compras_{LIGA_KEY}.csv", mime="text/csv")
-                # -------------------------------
             else: st.caption("Nenhuma aposta encontrada com os filtros.")
+    # ------------------------------------------
 
     # LISTA DETALHADA
     if 'sel_game' not in st.session_state:
@@ -390,7 +371,7 @@ with t_jogos:
                     cw, cd, cl = probs['vitoria_casa'], probs['empate'], probs['vitoria_visitante']
                     st.info(f"🔮 Placar Provável: **{probs['placar_exato'][0]}x{probs['placar_exato'][1]}**")
                     res_txt = g['casa'] if cw>cd and cw>cl else (g['fora'] if cl>cw and cl>cd else "Empate")
-                    st.success(f"Tendência: {res_txt} (Over 2.5: {probs['over_2_5']:.1%})")
+                    st.success(f"Tendência: {res_txt} (Prob Over 2.5: {probs['over_2_5']:.1%})")
                     
                     telegram_txt = f"🔥 <b>{LIGA_KEY}</b>: {g['casa']} x {g['fora']}\n"
                     c_res = st.columns(3)
