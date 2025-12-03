@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v8.4 - Radar do Dia + Gestão Kelly)
+# app.py - Robô de Valor (v9.0 - Forma Visual + Link Bet365 + Kelly + Radar)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -9,7 +9,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 FUSO = pytz.timezone('America/Manaus')
 st.set_page_config(page_title="Robô de Valor", page_icon="🤖", layout="wide")
 
-st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}</style>""", unsafe_allow_html=True)
+# CSS Otimizado
+st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}a[href]{text-decoration:none;color:white;}</style>""", unsafe_allow_html=True)
 
 LIGAS = {"Brasileirão": "BSA", "Champions League": "CL", "Premier League": "PL", "La Liga": "PD", "Serie A": "SA", "Bundesliga": "BL1", "Ligue 1": "FL1", "Eredivisie": "DED", "Championship": "ELC", "Primeira Liga": "PPL", "Euro": "EC"}
 EMOJIS = {"BSA": "🇧🇷", "PL": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "CL": "🇪🇺", "PD": "🇪🇸", "SA": "🇮🇹", "BL1": "🇩🇪", "FL1": "🇫🇷", "DED": "🇳🇱", "ELC": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "PPL": "🇵🇹", "EC": "🇪🇺"}
@@ -58,7 +59,7 @@ def calc_kelly(prob_ganhar, odd_decimal, fracao_kelly, banca_total):
     stake_pct = f_star * fracao_kelly
     return banca_total * stake_pct, stake_pct * 100
 
-# --- LÓGICA DE PREVISÃO ---
+# --- LÓGICA DE DADOS & FORMA ---
 @st.cache_data
 def load_dc(liga):
     try:
@@ -75,7 +76,8 @@ def get_standings(lid, season):
     except: return None
 
 @st.cache_data
-def train_poisson(liga, temp):
+def get_historical_data(liga, temp):
+    """Baixa histórico para Poisson e para os Indicadores de Forma"""
     data = req_api(f"competitions/{liga}/matches", {"season": str(temp), "status": "FINISHED"})
     if not data or not data.get("matches"): return None, None
     matches = [{'data_jogo': m['utcDate'][:10], 'TimeCasa': m['homeTeam']['name'], 'TimeVisitante': m['awayTeam']['name'], 'GolsCasa': int(m['score']['fullTime']['home']), 'GolsVisitante': int(m['score']['fullTime']['away'])} for m in data['matches'] if m['score']['fullTime']['home'] is not None]
@@ -83,6 +85,27 @@ def train_poisson(liga, temp):
     df['data_jogo'] = pd.to_datetime(df['data_jogo'])
     return df, {'media_gols_casa': df['GolsCasa'].mean(), 'media_gols_visitante': df['GolsVisitante'].mean()}
 
+def get_form_str(team, df):
+    """Gera a string de forma (ex: ✅❌➖✅✅) baseada nos últimos 5 jogos"""
+    if df is None or df.empty: return ""
+    # Filtra jogos do time
+    matches = df[(df['TimeCasa'] == team) | (df['TimeVisitante'] == team)].sort_values('data_jogo').tail(5)
+    if matches.empty: return "(?)"
+    
+    res = ""
+    for _, m in matches.iterrows():
+        # Lógica: Verifica se ganhou, empatou ou perdeu
+        if m['TimeCasa'] == team:
+            if m['GolsCasa'] > m['GolsVisitante']: res += "✅"
+            elif m['GolsCasa'] == m['GolsVisitante']: res += "➖"
+            else: res += "❌"
+        else: # Visitante
+            if m['GolsVisitante'] > m['GolsCasa']: res += "✅"
+            elif m['GolsVisitante'] == m['GolsCasa']: res += "➖"
+            else: res += "❌"
+    return f"({res})"
+
+# --- CÁLCULO DE PROBABILIDADES ---
 def calc_probs(l_casa, m_visit, rho=0.0):
     probs = np.zeros((7, 7))
     for i in range(7):
@@ -140,7 +163,7 @@ def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_gam
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v8.4")
+    st.title("🤖 Robô v9.0")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -160,13 +183,15 @@ with st.sidebar:
     min_prob = st.slider("Prob. Mínima %", 0, 100, 60, 5) / 100.0
     detalhado = st.toggle("Modo Detalhado")
 
-# Carga
+# Carga de Dados
 dc_data = load_dc(LIGA_ID)
-df_poi, avg_poi = (None, None)
+
+# Sempre carrega histórico para usar na Forma (Bolinhas), mesmo se usar DC
+df_history, avg_history = get_historical_data(LIGA_ID, config.TEMPORADA_PARA_ANALISAR)
+
 MODE = "DIXON_COLES" if dc_data else "FALHA"
-if not dc_data:
-    df_poi, avg_poi = train_poisson(LIGA_ID, config.TEMPORADA_PARA_ANALISAR)
-    if df_poi is not None: MODE = "POISSON_RECENTE"
+if not dc_data and df_history is not None:
+    MODE = "POISSON_RECENTE"
 
 # Abas
 t_jogos, t_hist, t_times = st.tabs(["Jogos", "Histórico", "Times"])
@@ -190,35 +215,37 @@ with t_jogos:
     matches = []
     if MODE != "FALHA": matches = get_matches(LIGA_ID, st.session_state.dt_sel)
     
-    # --- NOVO: RADAR DO DIA ---
+    # RADAR DO DIA
     if matches:
         with st.expander("📡 Escanear Oportunidades do Dia (Radar)", expanded=False):
             if st.button("Buscar Melhores Jogos"):
                 radar_results = []
                 with st.spinner("Analisando matematicamente todos os jogos..."):
                     for m in matches:
-                        p, x = unified_predict(MODE, dc_data, df_poi, avg_poi, m['casa'], m['fora'], m['dt_iso'])
+                        p, x = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
                         if p:
-                            # Filtra destaques
                             if p['vitoria_casa'] > 0.65: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Favorito Casa', 'Prob': p['vitoria_casa']})
                             if p['vitoria_visitante'] > 0.65: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Favorito Fora', 'Prob': p['vitoria_visitante']})
                             if p['over_2_5'] > 0.60: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Tendência Gols', 'Prob': p['over_2_5']})
                             if p['btts_sim'] > 0.60: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Ambas Marcam', 'Prob': p['btts_sim']})
-                
                 if radar_results:
                     df_radar = pd.DataFrame(radar_results).sort_values('Prob', ascending=False)
                     st.dataframe(df_radar, hide_index=True, use_container_width=True, column_config={"Prob": st.column_config.ProgressColumn("Probabilidade", format="%.1f%%", min_value=0, max_value=1)})
-                else:
-                    st.info("Nenhuma oportunidade 'clara' (>60% ou >65%) encontrada para hoje.")
-    # --------------------------
+                else: st.info("Nenhuma oportunidade >60% encontrada.")
 
     if 'sel_game' not in st.session_state:
         if not matches: st.info("Sem jogos agendados para hoje (Manaus).")
         else:
             for i, m in enumerate(matches):
-                _, xg = unified_predict(MODE, dc_data, df_poi, avg_poi, m['casa'], m['fora'], m['dt_iso'])
+                _, xg = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
+                
+                # --- GERA INDICADORES DE FORMA ---
+                form_casa = get_form_str(m['casa'], df_history)
+                form_fora = get_form_str(m['fora'], df_history)
+                
                 c1, c2 = st.columns([3, 1])
-                if c1.button(f"⚽ {m['hora']} | {m['casa']} x {m['fora']}", key=f"b{i}", use_container_width=True):
+                # Botão com visual de forma
+                if c1.button(f"⚽ {m['hora']} | {m['casa']} {form_casa} x {form_fora} {m['fora']}", key=f"b{i}", use_container_width=True):
                     st.session_state.sel_game = m
                     st.rerun()
                 c2.metric("xG", f"{xg[0]:.2f}-{xg[1]:.2f}" if xg else "-")
@@ -229,6 +256,11 @@ with t_jogos:
             st.rerun()
         
         st.markdown(f"### {g['casa']} vs {g['fora']}")
+        
+        # --- LINK BET365 ---
+        st.link_button("Apostar na Bet365 🟢", "https://www.bet365.com/#/AS/B1/", use_container_width=True)
+        # -------------------
+        
         with st.form("f1"):
             st.write("Odds:")
             oc = st.columns(4)
@@ -239,7 +271,7 @@ with t_jogos:
                 in_odds[k] = oc[i%4].number_input(l, min_value=1.0, step=0.01, format="%.2f")
             
             if st.form_submit_button("Analisar"):
-                probs, xg = unified_predict(MODE, dc_data, df_poi, avg_poi, g['casa'], g['fora'], g['dt_iso'])
+                probs, xg = unified_predict(MODE, dc_data, df_history, avg_history, g['casa'], g['fora'], g['dt_iso'])
                 if probs:
                     cw, cd, cl = probs['vitoria_casa'], probs['empate'], probs['vitoria_visitante']
                     res_txt = g['casa'] if cw>cd and cw>cl else (g['fora'] if cl>cw and cl>cd else "Empate")
