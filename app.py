@@ -1,6 +1,6 @@
 # app.py
-# O Robô de Análise (Versão 7.9 - Correção de Formato de Porcentagem)
-# UPGRADE: Corrigido o cálculo de exibição de porcentagem na tabela de histórico.
+# O Robô de Análise (Versão 8.0 - Fuso Horário de Manaus)
+# UPGRADE: Ajuste de Fuso Horário (Manaus UTC-4) para jogos noturnos.
 
 import streamlit as st
 import requests
@@ -11,21 +11,20 @@ import config
 import time
 from datetime import datetime, timedelta
 import json
-import pytz # <--- NOVO IMPORT
-
-# ... (resto dos imports)
-
-# Defina o fuso horário logo no início
-FUSO_MANAUS = pytz.timezone('America/Manaus')
+import pytz # <--- NOVO IMPORT NECESSÁRIO
 
 # --- NOVOS IMPORTS DO BANCO DE DADOS ---
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 # -------------------------------------
 
+# --- CONFIGURAÇÃO DE FUSO HORÁRIO ---
+# Define o fuso de Manaus para corrigir a data dos jogos
+FUSO_MANAUS = pytz.timezone('America/Manaus')
+
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô de Valor (BD)",
+    page_title="Robô de Valor (Manaus)",
     page_icon="🤖", 
     layout="wide"
 )
@@ -376,22 +375,48 @@ def encontrar_valor(probabilidades_calculadas, odds_casa, filtro_prob_minima=0.6
             }
     return oportunidades
 
-@st.cache_data
-def buscar_jogos_por_data(id_liga, data_str):
+# --- NOVA LÓGICA DE BUSCA DE JOGOS (FUSO HORÁRIO) ---
+@st.cache_data(ttl=300) # Atualiza a cada 5 min para garantir
+def buscar_jogos_por_data(id_liga, data_alvo_date):
+    """
+    Busca jogos na API considerando o fuso de Manaus.
+    Baixa jogos de data_alvo e data_alvo + 1 para cobrir a conversão UTC -> Manaus.
+    """
+    # Define o intervalo UTC para busca (Hoje + Amanhã para garantir)
+    str_inicio = data_alvo_date.strftime('%Y-%m-%d')
+    str_fim = (data_alvo_date + timedelta(days=1)).strftime('%Y-%m-%d')
+    
     endpoint = f"competitions/{id_liga}/matches"
-    params = {"dateFrom": data_str, "dateTo": data_str, "status": "SCHEDULED"}
+    params = {"dateFrom": str_inicio, "dateTo": str_fim, "status": "SCHEDULED"}
+    
     dados = fazer_requisicao_api(endpoint, params)
+    
     if not dados or "matches" not in dados or not dados["matches"]:
         return []
-    jogos_do_dia = []
+    
+    jogos_filtrados = []
+    
     for match_info in dados['matches']:
-        jogo = {
-            'data_jogo': match_info['utcDate'].split('T')[0],
-            'time_casa': match_info['homeTeam']['name'],
-            'time_visitante': match_info['awayTeam']['name']
-        }
-        jogos_do_dia.append(jogo)
-    return jogos_do_dia
+        # 1. Pega data UTC da API
+        utc_str = match_info['utcDate']
+        # 2. Converte string para datetime objeto
+        utc_dt = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ")
+        # 3. Localiza como UTC
+        utc_dt = pytz.utc.localize(utc_dt)
+        # 4. Converte para Manaus
+        manaus_dt = utc_dt.astimezone(FUSO_MANAUS)
+        
+        # 5. Verifica se a data em Manaus é a data que o usuário pediu
+        if manaus_dt.date() == data_alvo_date:
+            jogo = {
+                'data_jogo': manaus_dt.strftime('%Y-%m-%d'),
+                'hora_jogo': manaus_dt.strftime('%H:%M'), # Hora formatada para exibição
+                'time_casa': match_info['homeTeam']['name'],
+                'time_visitante': match_info['awayTeam']['name']
+            }
+            jogos_filtrados.append(jogo)
+            
+    return jogos_filtrados
 
 def enviar_mensagem_telegram(mensagem):
     if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "SEU_TOKEN_DO_BOTFATHER_AQUI":
@@ -442,7 +467,7 @@ nomes_mercado = {
 # --- 1. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("🤖 Robô de Valor")
-    st.caption("v7.9 - Correção de %") # Versão atualizada
+    st.caption("v8.0 - Fuso Manaus") # Versão atualizada
     
     liga_selecionada_nome = st.selectbox("1. Selecione a Liga:", LIGAS_DISPONIVEIS.keys())
     LIGA_ATUAL = LIGAS_DISPONIVEIS[liga_selecionada_nome]
@@ -450,14 +475,18 @@ with st.sidebar:
     
     st.header("3. Buscar Jogos")
     
+    # Define o "agora" em Manaus
+    agora_manaus = datetime.now(FUSO_MANAUS)
+    
     if 'data_selecionada' not in st.session_state:
-        st.session_state.data_selecionada = datetime.now()
+        st.session_state.data_selecionada = agora_manaus.date()
+        
     def dia_anterior():
         st.session_state.data_selecionada -= timedelta(days=1)
     def proximo_dia():
         st.session_state.data_selecionada += timedelta(days=1)
     def hoje():
-        st.session_state.data_selecionada = datetime.now()
+        st.session_state.data_selecionada = datetime.now(FUSO_MANAUS).date()
 
     col_data1, col_data2 = st.columns([1,1])
     with col_data1:
@@ -468,9 +497,12 @@ with st.sidebar:
     data_selecionada = st.date_input(
         "Ou selecione uma data:",
         value=st.session_state.data_selecionada,
-        key='data_selecionada' 
+        key='data_selecionada_input'
     )
-    st.button("Ir para Hoje", on_click=hoje, use_container_width=True)
+    # Sincroniza
+    st.session_state.data_selecionada = data_selecionada
+    
+    st.button("Ir para Hoje (Manaus)", on_click=hoje, use_container_width=True)
             
     st.header("4. Filtros de Análise")
     filtro_prob_minima_percentual = st.slider(
@@ -550,15 +582,17 @@ with tab_analise:
 
     # --- LÓGICA DE "TELAS" (Drill-Down) ---
     if 'jogo_selecionado' not in st.session_state:
-        st.header(f"Jogos para {data_selecionada.strftime('%d/%m/%Y')}")
+        # Usa data formatada para título, mas objeto 'date' para função
+        data_str_titulo = data_selecionada.strftime('%d/%m/%Y')
+        st.header(f"Jogos para {data_str_titulo} (Horário Manaus)")
         st.caption(f"Usando Cérebro: {MODO_CEREBRO} | Filtro de Probabilidade: > {filtro_prob_minima_percentual}%")
 
         if MODO_CEREBRO != "FALHA":
-            data_str = data_selecionada.strftime('%Y-%m-%d')
-            jogos_do_dia = buscar_jogos_por_data(LIGA_ATUAL, data_str)
+            # CHAMADA ATUALIZADA: Passa o objeto date, não string
+            jogos_do_dia = buscar_jogos_por_data(LIGA_ATUAL, data_selecionada)
 
             if not jogos_do_dia:
-                st.info(f"Nenhum jogo agendado encontrado para a liga {LIGA_ATUAL} na data {data_str}.")
+                st.info(f"Nenhum jogo agendado encontrado para a liga {LIGA_ATUAL} na data {data_str_titulo}.")
             else:
                 st.info(f"Encontrados {len(jogos_do_dia)} jogos. Clique em um jogo para analisar:")
                 
@@ -576,6 +610,7 @@ with tab_analise:
                                 _, xg_tupla = resultado_previsao
                         
                         elif MODO_CEREBRO == "POISSON_RECENTE":
+                            # Poisson precisa da data para o filtro de "recente"
                             forcas_times = calcular_forcas_recente_poisson(
                                 df_historico_poisson, jogo['time_casa'], jogo['time_visitante'], jogo['data_jogo']
                             )
@@ -597,8 +632,9 @@ with tab_analise:
                             st.session_state.jogo_selecionado = jogo_clicado
                             st.session_state.jogo_indice = indice
 
+                        # Botão com HORA
                         st.button(
-                            f"⚽ **{jogo['time_casa']} vs {jogo['time_visitante']}**", 
+                            f"⚽ {jogo['hora_jogo']} | **{jogo['time_casa']} vs {jogo['time_visitante']}**", 
                             on_click=selecionar_jogo,
                             use_container_width=True,
                             key=f"btn_jogo_{i}"
@@ -1010,7 +1046,7 @@ with tab_times:
     emoji_liga_selecionada = LIGAS_EMOJI.get(LIGA_ATUAL, '🏳️')
 
     # CASO 1: Cérebro DIXON-COLES está ativo
-    if MODO_CEREBRO == "DIXON-COLES" and dados_cerebro_dc:
+    if MODO_CEREBRO == "DIXON_COLES" and dados_cerebro_dc:
         
         try:
             # --- Bloco de dados para ambas as melhorias ---
@@ -1181,5 +1217,3 @@ with tab_times:
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
 ### MELHORIA 7 - FIM ###
-
-
