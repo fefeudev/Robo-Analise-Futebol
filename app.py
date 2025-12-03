@@ -79,44 +79,45 @@ def load_dc(liga_nome):
 @st.cache_data(ttl=300)
 def fetch_league_data(league_id, season, date_str):
     """
-    CORREÇÃO V11.1: 
-    Busca simplificada. Removemos o parâmetro 'season' para evitar
-    conflitos de virada de ano. Filtramos apenas por Liga e Data.
+    CORREÇÃO V11.2 (FORÇA BRUTA):
+    Busca TODOS os jogos do dia (sem filtro de liga na API) e filtra
+    localmente no Python. Isso resolve o bug da 'season' obrigatória.
     """
-    # 1. Busca Jogos (Sem filtrar season, apenas Liga + Data)
-    # Isso evita o erro "Nenhum jogo encontrado" se a API achar que a season é 2024 ou 2025
-    fixtures = get_api_data("fixtures", {"league": league_id, "date": date_str})
+    # 1. Busca TODOS os jogos da data (Gasta 1 requisição igual)
+    all_fixtures = get_api_data("fixtures", {"date": date_str})
     
-    if not fixtures: 
+    if not all_fixtures: 
+        return []
+        
+    # 2. Filtra localmente apenas a liga que queremos
+    fixtures = [f for f in all_fixtures if f['league']['id'] == league_id]
+    
+    if not fixtures:
         return []
     
-    # 2. Busca Odds (Estratégia Híbrida)
-    # Tenta buscar odds específicas da liga/data
-    odds_data = get_api_data("odds", {"league": league_id, "date": date_str, "bookmaker": "8"}) # 8 = Bet365
+    # 3. Busca Odds (Tenta pegar todas do dia para garantir)
+    # Como já sabemos que os jogos existem, buscamos as odds do dia
+    odds_data = get_api_data("odds", {"date": date_str, "bookmaker": "8"}) # 8 = Bet365
     
-    # Se não vier nada (alguns endpoints exigem season), busca TODAS as odds do dia (igual seu teste)
-    if not odds_data:
-        odds_data = get_api_data("odds", {"date": date_str, "bookmaker": "8"})
-
-    # 3. Mapeia Odds por Fixture ID
+    # Mapeia Odds
     odds_map = {}
     if odds_data:
         for o in odds_data:
-            fid = o['fixture']['id']
-            # Só processa se o jogo for desta liga (segurança extra)
+            # Verifica se a odd é da liga certa para economizar processamento
             if o['league']['id'] != league_id:
                 continue
                 
-            bookie = o['bookmakers'][0] # Pega a primeira casa
+            fid = o['fixture']['id']
+            bookie = o['bookmakers'][0]
             markets = {}
             for m in bookie['bets']:
                 if m['id'] == 1: markets['1x2'] = {Op['value']: float(Op['odd']) for Op in m['values']}
                 elif m['id'] == 12: markets['dc'] = {Op['value']: float(Op['odd']) for Op in m['values']}
-                elif m['id'] == 5: markets['goals'] = {Op['value']: float(Op['odd']) for Op in m['values']} # Over/Under
+                elif m['id'] == 5: markets['goals'] = {Op['value']: float(Op['odd']) for Op in m['values']}
                 elif m['id'] == 8: markets['btts'] = {Op['value']: float(Op['odd']) for Op in m['values']}
             odds_map[fid] = markets
 
-    # 4. Funde tudo
+    # 4. Monta o resultado final
     final_data = []
     for f in fixtures:
         fid = f['fixture']['id']
@@ -131,6 +132,7 @@ def fetch_league_data(league_id, season, date_str):
             'odds': odds_map.get(fid, {})
         }
         final_data.append(match)
+        
     return final_data
 
 @st.cache_data
@@ -304,4 +306,5 @@ with t_hist:
         c1,c2 = st.columns(2)
         c1.metric("Greens", g); c2.metric("Reds", r)
         st.dataframe(df_h, use_container_width=True)
+
 
