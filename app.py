@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v9.1 - Backtesting / Máquina do Tempo)
+# app.py - Robô de Valor (v9.2 - Placar Exato + Resumo Backtest + Kelly)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -77,6 +77,7 @@ def get_standings(lid, season):
 
 @st.cache_data
 def get_historical_data(liga, temp):
+    """Baixa histórico para Poisson, H2H e Forma"""
     data = req_api(f"competitions/{liga}/matches", {"season": str(temp), "status": "FINISHED"})
     if not data or not data.get("matches"): return None, None
     matches = [{'data_jogo': m['utcDate'][:10], 'TimeCasa': m['homeTeam']['name'], 'TimeVisitante': m['awayTeam']['name'], 'GolsCasa': int(m['score']['fullTime']['home']), 'GolsVisitante': int(m['score']['fullTime']['away'])} for m in data['matches'] if m['score']['fullTime']['home'] is not None]
@@ -85,6 +86,7 @@ def get_historical_data(liga, temp):
     return df, {'media_gols_casa': df['GolsCasa'].mean(), 'media_gols_visitante': df['GolsVisitante'].mean()}
 
 def get_form_str(team, df):
+    """Gera a string de forma (ex: ✅❌➖)"""
     if df is None or df.empty: return ""
     matches = df[(df['TimeCasa'] == team) | (df['TimeVisitante'] == team)].sort_values('data_jogo').tail(5)
     if matches.empty: return "(?)"
@@ -100,9 +102,20 @@ def get_form_str(team, df):
             else: res += "❌"
     return f"({res})"
 
+def get_h2h_stats(home, away, df):
+    """Retorna os últimos confrontos diretos"""
+    if df is None or df.empty: return None
+    mask = ((df['TimeCasa'] == home) & (df['TimeVisitante'] == away)) | \
+           ((df['TimeCasa'] == away) & (df['TimeVisitante'] == home))
+    h2h_df = df[mask].sort_values('data_jogo', ascending=False)
+    return h2h_df
+
 # --- CÁLCULO DE PROBABILIDADES ---
 def calc_probs(l_casa, m_visit, rho=0.0):
     probs = np.zeros((7, 7))
+    max_prob = 0
+    placar_provavel = (0, 0)
+    
     for i in range(7):
         for j in range(7):
             tau = 1.0
@@ -110,7 +123,14 @@ def calc_probs(l_casa, m_visit, rho=0.0):
             elif i==1 and j==0: tau = 1 + (l_casa*rho)
             elif i==0 and j==1: tau = 1 + (m_visit*rho)
             elif i==1 and j==1: tau = 1 - rho
-            probs[i, j] = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
+            val = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
+            probs[i, j] = val
+            
+            # NOVO: Detecta o placar mais provável
+            if val > max_prob:
+                max_prob = val
+                placar_provavel = (i, j)
+                
     total = np.sum(probs)
     if total == 0: return None
     home = np.sum(np.tril(probs, -1))
@@ -122,10 +142,12 @@ def calc_probs(l_casa, m_visit, rho=0.0):
         for j in range(7):
             if i+j > 2.5: over += probs[i,j]
             if i>0 and j>0: btts += probs[i,j]
+            
     return {
         'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
         'over_2_5': over/total, 'btts_sim': btts/total,
-        'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total
+        'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total,
+        'placar_exato': placar_provavel # Retorna o placar (gols_casa, gols_fora)
     }
 
 def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_game):
@@ -158,41 +180,32 @@ def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_gam
 def check_result(probs, score_home, score_away, min_prob):
     """Verifica se a previsão bateu com o resultado real (Backtest)"""
     results = []
+    is_green_game = False
     
     # 1. Match Winner
     winner = "Casa" if score_home > score_away else ("Fora" if score_away > score_home else "Empate")
-    p_win = 0
-    label = ""
-    
     if probs['vitoria_casa'] > min_prob:
-        p_win = probs['vitoria_casa']
-        label = "Casa"
         status = "✅" if winner == "Casa" else "❌"
-        results.append(f"{status} {label} ({p_win:.0%})")
+        results.append(f"{status} Casa")
+        if status == "✅": is_green_game = True
     elif probs['vitoria_visitante'] > min_prob:
-        p_win = probs['vitoria_visitante']
-        label = "Fora"
         status = "✅" if winner == "Fora" else "❌"
-        results.append(f"{status} {label} ({p_win:.0%})")
+        results.append(f"{status} Fora")
+        if status == "✅": is_green_game = True
         
     # 2. Over 2.5
     total_gols = score_home + score_away
     if probs['over_2_5'] > min_prob:
         status = "✅" if total_gols > 2.5 else "❌"
-        results.append(f"{status} Over 2.5 ({probs['over_2_5']:.0%})")
+        results.append(f"{status} Over")
+        if status == "✅": is_green_game = True
         
-    # 3. BTTS
-    btts_real = (score_home > 0 and score_away > 0)
-    if probs['btts_sim'] > min_prob:
-        status = "✅" if btts_real else "❌"
-        results.append(f"{status} BTTS ({probs['btts_sim']:.0%})")
-        
-    return results
+    return results, is_green_game
 
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v9.1")
+    st.title("🤖 Robô v9.2")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -209,7 +222,7 @@ with st.sidebar:
     # --- TOGGLE BACKTESTING ---
     MODO_BACKTEST = st.toggle("🔙 Modo Backtesting (Validar Passado)", value=False)
     if MODO_BACKTEST:
-        st.warning("⚠️ Modo Backtest ATIVO: Mostrando resultados de jogos passados.")
+        st.warning("⚠️ Backtest ATIVO: Mostrando resultados reais.")
     # --------------------------
     
     st.divider()
@@ -236,7 +249,6 @@ with t_jogos:
     def get_matches(lid, dtarget, is_backtest):
         d1 = dtarget.strftime('%Y-%m-%d')
         d2 = (dtarget + timedelta(days=1)).strftime('%Y-%m-%d')
-        # Se for Backtest, busca FINISHED, se não, SCHEDULED
         status_req = "FINISHED" if is_backtest else "SCHEDULED"
         res = req_api(f"competitions/{lid}/matches", {"dateFrom": d1, "dateTo": d2, "status": status_req})
         
@@ -251,7 +263,6 @@ with t_jogos:
                     'fora': m['awayTeam']['name'], 
                     'dt_iso': dt_loc.strftime('%Y-%m-%d')
                 }
-                # Se for backtest, pega o placar
                 if is_backtest and m['score']['fullTime']['home'] is not None:
                     item['placar_casa'] = m['score']['fullTime']['home']
                     item['placar_fora'] = m['score']['fullTime']['away']
@@ -263,6 +274,30 @@ with t_jogos:
     
     if not matches:
         st.info(f"Sem jogos {'TERMINADOS' if MODO_BACKTEST else 'AGENDADOS'} para {st.session_state.dt_sel.strftime('%d/%m/%Y')}.")
+    
+    # --- NOVO: RESUMO DO BACKTEST (DASHBOARD) ---
+    if MODO_BACKTEST and matches:
+        total_greens = 0
+        total_reds = 0
+        total_entradas = 0
+        
+        # Faz um loop rápido para calcular estatísticas
+        for m in matches:
+            if 'placar_casa' in m:
+                p, _ = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
+                if p:
+                    res_check, is_green = check_result(p, m['placar_casa'], m['placar_fora'], min_prob)
+                    if res_check: # Se houve alguma aposta sugerida
+                        total_entradas += 1
+                        if is_green: total_greens += 1
+                        else: total_reds += 1
+        
+        if total_entradas > 0:
+            assertiv = (total_greens / total_entradas) * 100
+            st.success(f"📊 **Resumo do Dia (Simulado):** {total_greens} Greens ✅ | {total_reds} Reds ❌ | Assertividade: **{assertiv:.1f}%**")
+        else:
+            st.warning("Nenhuma entrada clara encontrada neste dia (com os filtros atuais).")
+    # ---------------------------------------------
     
     # RADAR (Só aparece se NÃO for backtest)
     if matches and not MODO_BACKTEST:
@@ -299,18 +334,16 @@ with t_jogos:
                     st.session_state.sel_game = m
                     st.rerun()
             
-            # Se for Backtest, mostra resultado direto na lista
             if MODO_BACKTEST and p and 'placar_casa' in m:
-                res_check = check_result(p, m['placar_casa'], m['placar_fora'], min_prob)
+                res_check, _ = check_result(p, m['placar_casa'], m['placar_fora'], min_prob)
                 if res_check:
                     c2.success(" | ".join(res_check))
                 else:
-                    c2.caption("Sem entrada clara")
+                    c2.caption("Sem entrada")
             else:
                 c2.metric("xG", f"{xg[0]:.2f}-{xg[1]:.2f}" if xg else "-")
 
     else:
-        # TELA DE ANÁLISE (Só acessível se Backtest estiver OFF)
         if MODO_BACKTEST:
             del st.session_state.sel_game
             st.rerun()
@@ -323,6 +356,14 @@ with t_jogos:
         st.markdown(f"### {g['casa']} vs {g['fora']}")
         st.link_button("Apostar na Bet365 🟢", "https://www.bet365.com/#/AS/B1/", use_container_width=True)
         
+        # H2H
+        with st.expander("⚔️ Histórico de Confronto Direto (H2H)"):
+            h2h_df = get_h2h_stats(g['casa'], g['fora'], df_history)
+            if h2h_df is not None and not h2h_df.empty:
+                st.dataframe(h2h_df[['data_jogo', 'TimeCasa', 'TimeVisitante', 'GolsCasa', 'GolsVisitante']].head(5), hide_index=True, use_container_width=True)
+            else:
+                st.info("Sem confrontos diretos recentes.")
+
         with st.form("f1"):
             st.write("Odds:")
             oc = st.columns(4)
@@ -336,8 +377,22 @@ with t_jogos:
                 probs, xg = unified_predict(MODE, dc_data, df_history, avg_history, g['casa'], g['fora'], g['dt_iso'])
                 if probs:
                     cw, cd, cl = probs['vitoria_casa'], probs['empate'], probs['vitoria_visitante']
+                    
+                    # --- NOVO: PLACAR EXATO E GRÁFICO DE DOMINÂNCIA ---
+                    c_info1, c_info2 = st.columns(2)
+                    with c_info1:
+                        st.info(f"🔮 Placar Mais Provável: **{probs['placar_exato'][0]}x{probs['placar_exato'][1]}**")
+                    with c_info2:
+                        st.write("📊 **Força Ofensiva (xG)**")
+                        chart_data = pd.DataFrame({
+                            'Time': [g['casa'], g['fora']],
+                            'xG': [xg[0], xg[1]]
+                        })
+                        st.bar_chart(chart_data, x='Time', y='xG', color=["#4A90E2", "#FF4B4B"])
+                    # --------------------------------------------------
+                    
                     res_txt = g['casa'] if cw>cd and cw>cl else (g['fora'] if cl>cw and cl>cd else "Empate")
-                    st.info(f"Tendência: {res_txt} (Over 2.5: {probs['over_2_5']:.1%}) | xG: {xg[0]:.2f} - {xg[1]:.2f}")
+                    st.success(f"Tendência: {res_txt} (Prob Over 2.5: {probs['over_2_5']:.1%})")
                     
                     telegram_txt = f"🔥 <b>{LIGA_KEY}</b>: {g['casa']} x {g['fora']}\n"
                     c_res = st.columns(3)
@@ -367,7 +422,6 @@ with t_jogos:
                             salvar_db(db, g['dt_iso'], LIGA_KEY, f"{g['casa']} x {g['fora']}", MERCADOS_INFO[k], odd_user, p_bot*100, val, stake_reais)
 
                     if has_val:
-                        st.success(f"Oportunidades encontradas!")
                         if config.TELEGRAM_TOKEN: requests.get(f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage", params={'chat_id': config.TELEGRAM_CHAT_ID, 'text': telegram_txt, 'parse_mode': 'HTML'})
                     elif not detalhado: st.warning("Sem valor claro.")
                 else: st.error("Erro no cálculo.")
