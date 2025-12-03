@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v8.2 - Comparação Real vs. Estatística)
+# app.py - Robô de Valor (v8.3 - Gestão de Banca Kelly)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -32,7 +32,8 @@ def connect_db():
         return gspread.authorize(creds).open_by_url(st.secrets.GOOGLE_SHEET_URL).sheet1
     except: return None
 
-def salvar_db(sheet, data, liga, jogo, mercado, odd, prob, valor):
+def salvar_db(sheet, data, liga, jogo, mercado, odd, prob, valor, stake):
+    # Adicionada coluna de Stake no DB se quiser usar futuramente (apenas texto por enquanto)
     if sheet: sheet.append_row([data, liga, jogo, mercado, float(odd), float(prob)/100, float(valor)/100, "Aguardando ⏳"], value_input_option='USER_ENTERED')
 
 @st.cache_data(ttl=60)
@@ -48,6 +49,30 @@ def load_db(_sheet):
         return df, counts.get('Green ✅', 0), counts.get('Red ❌', 0)
     except: return pd.DataFrame(), 0, 0
 
+# --- NOVO: CÁLCULO DE KELLY ---
+def calc_kelly(prob_ganhar, odd_decimal, fracao_kelly, banca_total):
+    """
+    Calcula o valor da aposta usando o Critério de Kelly Fracionado.
+    f* = (bp - q) / b
+    Onde: b = odd - 1; p = probabilidade; q = 1 - p
+    """
+    if odd_decimal <= 1 or prob_ganhar <= 0: return 0.0, 0.0
+    
+    b = odd_decimal - 1
+    p = prob_ganhar
+    q = 1 - p
+    
+    f_star = (b * p - q) / b
+    
+    # Se f_star negativo (EV negativo), stake é 0
+    if f_star <= 0: return 0.0, 0.0
+    
+    # Aplica a fração de segurança (Kelly Parcial)
+    stake_pct = f_star * fracao_kelly
+    stake_valor = banca_total * stake_pct
+    
+    return stake_valor, (stake_pct * 100)
+
 # --- LÓGICA DE PREVISÃO & DADOS ---
 @st.cache_data
 def load_dc(liga):
@@ -55,7 +80,7 @@ def load_dc(liga):
         with open(f"dc_params_{liga}.json", 'r', encoding='utf-8') as f: return json.load(f)
     except: return None
 
-@st.cache_data(ttl=3600) # Novo: Pega a tabela de classificação real
+@st.cache_data(ttl=3600)
 def get_standings(lid, season):
     try:
         res = req_api(f"competitions/{lid}/standings", {"season": str(season)})
@@ -92,7 +117,6 @@ def calc_probs(l_casa, m_visit, rho=0.0):
     away = np.sum(np.triu(probs, 1))
     over = np.sum(probs[np.triu_indices(7, k=0)]) - np.sum(probs[0:3, 0:3]) + probs[2,0] + probs[0,2] + probs[1,1] 
     
-    # Recalcula Over/BTTS com loop seguro
     over, btts = 0, 0
     for i in range(7):
         for j in range(7):
@@ -135,7 +159,7 @@ def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_gam
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v8.2")
+    st.title("🤖 Robô v8.3")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -148,6 +172,15 @@ with st.sidebar:
     if st.button("Hoje (Manaus)"): st.session_state.dt_sel = datetime.now(FUSO).date()
     
     st.divider()
+    
+    # --- NOVO: INPUTS DA BANCA ---
+    st.header("💰 Gestão de Banca")
+    BANCA_USUARIO = st.number_input("Banca Total (R$):", value=100.0, step=50.0)
+    KELLY_FRACAO = st.slider("Fator Kelly (Risco):", 0.01, 0.50, 0.10, 0.01, help="0.10 é conservador (recomendado). 0.50 é agressivo.")
+    st.caption("Sugere o valor da aposta baseado na confiança.")
+    st.divider()
+    # -----------------------------
+    
     min_prob = st.slider("Prob. Mínima %", 0, 100, 60, 5) / 100.0
     detalhado = st.toggle("Modo Detalhado")
 
@@ -214,7 +247,6 @@ with t_jogos:
                     res_txt = g['casa'] if cw>cd and cw>cl else (g['fora'] if cl>cw and cl>cd else "Empate")
                     st.info(f"Tendência: {res_txt} (Over 2.5: {probs['over_2_5']:.1%}) | xG: {xg[0]:.2f} - {xg[1]:.2f}")
                     
-                    ops = {}
                     telegram_txt = f"🔥 <b>{LIGA_KEY}</b>: {g['casa']} x {g['fora']}\n"
                     c_res = st.columns(3)
                     idx = 0
@@ -226,18 +258,33 @@ with t_jogos:
                         val = (p_bot - (1/odd_user)) * 100
                         is_green = val > 5 and p_bot > min_prob
                         
+                        # --- CÁLCULO DE STAKE KELLY ---
+                        stake_reais, stake_pct = 0.0, 0.0
+                        if is_green:
+                            stake_reais, stake_pct = calc_kelly(p_bot, odd_user, KELLY_FRACAO, BANCA_USUARIO)
+                        # -----------------------------
+                        
                         if is_green or detalhado:
                             cor = "normal" if is_green else "inverse"
-                            c_res[idx%3].metric(f"{MERCADOS_INFO[k]}", f"{p_bot:.1%}", f"{val:.1f}% EV", delta_color=cor)
+                            
+                            # Label mais rico com a Stake
+                            lbl_val = f"{p_bot:.1%}"
+                            if stake_reais > 0:
+                                lbl_val += f" (R${stake_reais:.0f})"
+                                
+                            c_res[idx%3].metric(f"{MERCADOS_INFO[k]}", lbl_val, f"{val:.1f}% EV", delta_color=cor)
                             idx+=1
                         
                         if is_green:
                             has_val = True
                             telegram_txt += f"✅ {MERCADOS_INFO[k]} @ {odd_user:.2f} (Prob: {p_bot:.0%})\n"
-                            salvar_db(db, g['dt_iso'], LIGA_KEY, f"{g['casa']} x {g['fora']}", MERCADOS_INFO[k], odd_user, p_bot*100, val)
+                            if stake_reais > 0:
+                                telegram_txt += f"   💰 Stake: R$ {stake_reais:.2f} ({stake_pct:.1f}%)\n"
+                            
+                            salvar_db(db, g['dt_iso'], LIGA_KEY, f"{g['casa']} x {g['fora']}", MERCADOS_INFO[k], odd_user, p_bot*100, val, stake_reais)
 
                     if has_val:
-                        st.success("Oportunidades encontradas!")
+                        st.success(f"Oportunidades encontradas! Baseado na banca de R$ {BANCA_USUARIO:.2f}")
                         if config.TELEGRAM_TOKEN: requests.get(f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage", params={'chat_id': config.TELEGRAM_CHAT_ID, 'text': telegram_txt, 'parse_mode': 'HTML'})
                     elif not detalhado: st.warning("Sem valor claro.")
                 else: st.error("Erro no cálculo.")
@@ -290,8 +337,7 @@ with t_times:
         tm = st.selectbox("Simular xG do Time:", df_t['Time'] if dc_data else [])
         if tm:
             f = dc_data['forcas'][tm]
-            avg_a, avg_d = df_t['Força'].mean(), df_t['Força'].mean() # Simplificado para média geral
-            # Recalc média real
+            avg_a, avg_d = df_t['Força'].mean(), df_t['Força'].mean() 
             avg_a = pd.DataFrame([v['ataque'] for v in dc_data['forcas'].values()]).mean()[0]
             avg_d = pd.DataFrame([v['defesa'] for v in dc_data['forcas'].values()]).mean()[0]
             
