@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v8.3 - Gestão de Banca Kelly)
+# app.py - Robô de Valor (v8.4 - Radar do Dia + Gestão Kelly)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -33,7 +33,6 @@ def connect_db():
     except: return None
 
 def salvar_db(sheet, data, liga, jogo, mercado, odd, prob, valor, stake):
-    # Adicionada coluna de Stake no DB se quiser usar futuramente (apenas texto por enquanto)
     if sheet: sheet.append_row([data, liga, jogo, mercado, float(odd), float(prob)/100, float(valor)/100, "Aguardando ⏳"], value_input_option='USER_ENTERED')
 
 @st.cache_data(ttl=60)
@@ -49,31 +48,17 @@ def load_db(_sheet):
         return df, counts.get('Green ✅', 0), counts.get('Red ❌', 0)
     except: return pd.DataFrame(), 0, 0
 
-# --- NOVO: CÁLCULO DE KELLY ---
 def calc_kelly(prob_ganhar, odd_decimal, fracao_kelly, banca_total):
-    """
-    Calcula o valor da aposta usando o Critério de Kelly Fracionado.
-    f* = (bp - q) / b
-    Onde: b = odd - 1; p = probabilidade; q = 1 - p
-    """
     if odd_decimal <= 1 or prob_ganhar <= 0: return 0.0, 0.0
-    
     b = odd_decimal - 1
     p = prob_ganhar
     q = 1 - p
-    
     f_star = (b * p - q) / b
-    
-    # Se f_star negativo (EV negativo), stake é 0
     if f_star <= 0: return 0.0, 0.0
-    
-    # Aplica a fração de segurança (Kelly Parcial)
     stake_pct = f_star * fracao_kelly
-    stake_valor = banca_total * stake_pct
-    
-    return stake_valor, (stake_pct * 100)
+    return banca_total * stake_pct, stake_pct * 100
 
-# --- LÓGICA DE PREVISÃO & DADOS ---
+# --- LÓGICA DE PREVISÃO ---
 @st.cache_data
 def load_dc(liga):
     try:
@@ -108,21 +93,17 @@ def calc_probs(l_casa, m_visit, rho=0.0):
             elif i==0 and j==1: tau = 1 + (m_visit*rho)
             elif i==1 and j==1: tau = 1 - rho
             probs[i, j] = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
-    
     total = np.sum(probs)
     if total == 0: return None
-    
     home = np.sum(np.tril(probs, -1))
     draw = np.sum(np.diag(probs))
     away = np.sum(np.triu(probs, 1))
-    over = np.sum(probs[np.triu_indices(7, k=0)]) - np.sum(probs[0:3, 0:3]) + probs[2,0] + probs[0,2] + probs[1,1] 
-    
-    over, btts = 0, 0
+    over = 0
+    btts = 0
     for i in range(7):
         for j in range(7):
             if i+j > 2.5: over += probs[i,j]
             if i>0 and j>0: btts += probs[i,j]
-
     return {
         'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
         'over_2_5': over/total, 'btts_sim': btts/total,
@@ -159,7 +140,7 @@ def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_gam
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v8.3")
+    st.title("🤖 Robô v8.4")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -172,19 +153,14 @@ with st.sidebar:
     if st.button("Hoje (Manaus)"): st.session_state.dt_sel = datetime.now(FUSO).date()
     
     st.divider()
-    
-    # --- NOVO: INPUTS DA BANCA ---
     st.header("💰 Gestão de Banca")
     BANCA_USUARIO = st.number_input("Banca Total (R$):", value=100.0, step=50.0)
-    KELLY_FRACAO = st.slider("Fator Kelly (Risco):", 0.01, 0.50, 0.10, 0.01, help="0.10 é conservador (recomendado). 0.50 é agressivo.")
-    st.caption("Sugere o valor da aposta baseado na confiança.")
+    KELLY_FRACAO = st.slider("Fator Kelly:", 0.01, 0.50, 0.10, 0.01)
     st.divider()
-    # -----------------------------
-    
     min_prob = st.slider("Prob. Mínima %", 0, 100, 60, 5) / 100.0
     detalhado = st.toggle("Modo Detalhado")
 
-# Carga de Cérebro
+# Carga
 dc_data = load_dc(LIGA_ID)
 df_poi, avg_poi = (None, None)
 MODE = "DIXON_COLES" if dc_data else "FALHA"
@@ -214,6 +190,28 @@ with t_jogos:
     matches = []
     if MODE != "FALHA": matches = get_matches(LIGA_ID, st.session_state.dt_sel)
     
+    # --- NOVO: RADAR DO DIA ---
+    if matches:
+        with st.expander("📡 Escanear Oportunidades do Dia (Radar)", expanded=False):
+            if st.button("Buscar Melhores Jogos"):
+                radar_results = []
+                with st.spinner("Analisando matematicamente todos os jogos..."):
+                    for m in matches:
+                        p, x = unified_predict(MODE, dc_data, df_poi, avg_poi, m['casa'], m['fora'], m['dt_iso'])
+                        if p:
+                            # Filtra destaques
+                            if p['vitoria_casa'] > 0.65: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Favorito Casa', 'Prob': p['vitoria_casa']})
+                            if p['vitoria_visitante'] > 0.65: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Favorito Fora', 'Prob': p['vitoria_visitante']})
+                            if p['over_2_5'] > 0.60: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Tendência Gols', 'Prob': p['over_2_5']})
+                            if p['btts_sim'] > 0.60: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Ambas Marcam', 'Prob': p['btts_sim']})
+                
+                if radar_results:
+                    df_radar = pd.DataFrame(radar_results).sort_values('Prob', ascending=False)
+                    st.dataframe(df_radar, hide_index=True, use_container_width=True, column_config={"Prob": st.column_config.ProgressColumn("Probabilidade", format="%.1f%%", min_value=0, max_value=1)})
+                else:
+                    st.info("Nenhuma oportunidade 'clara' (>60% ou >65%) encontrada para hoje.")
+    # --------------------------
+
     if 'sel_game' not in st.session_state:
         if not matches: st.info("Sem jogos agendados para hoje (Manaus).")
         else:
@@ -258,33 +256,24 @@ with t_jogos:
                         val = (p_bot - (1/odd_user)) * 100
                         is_green = val > 5 and p_bot > min_prob
                         
-                        # --- CÁLCULO DE STAKE KELLY ---
                         stake_reais, stake_pct = 0.0, 0.0
                         if is_green:
                             stake_reais, stake_pct = calc_kelly(p_bot, odd_user, KELLY_FRACAO, BANCA_USUARIO)
-                        # -----------------------------
                         
                         if is_green or detalhado:
                             cor = "normal" if is_green else "inverse"
-                            
-                            # Label mais rico com a Stake
-                            lbl_val = f"{p_bot:.1%}"
-                            if stake_reais > 0:
-                                lbl_val += f" (R${stake_reais:.0f})"
-                                
+                            lbl_val = f"{p_bot:.1%}" + (f" (R${stake_reais:.0f})" if stake_reais > 0 else "")
                             c_res[idx%3].metric(f"{MERCADOS_INFO[k]}", lbl_val, f"{val:.1f}% EV", delta_color=cor)
                             idx+=1
                         
                         if is_green:
                             has_val = True
                             telegram_txt += f"✅ {MERCADOS_INFO[k]} @ {odd_user:.2f} (Prob: {p_bot:.0%})\n"
-                            if stake_reais > 0:
-                                telegram_txt += f"   💰 Stake: R$ {stake_reais:.2f} ({stake_pct:.1f}%)\n"
-                            
+                            if stake_reais > 0: telegram_txt += f"   💰 Stake: R$ {stake_reais:.2f} ({stake_pct:.1f}%)\n"
                             salvar_db(db, g['dt_iso'], LIGA_KEY, f"{g['casa']} x {g['fora']}", MERCADOS_INFO[k], odd_user, p_bot*100, val, stake_reais)
 
                     if has_val:
-                        st.success(f"Oportunidades encontradas! Baseado na banca de R$ {BANCA_USUARIO:.2f}")
+                        st.success(f"Oportunidades encontradas!")
                         if config.TELEGRAM_TOKEN: requests.get(f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage", params={'chat_id': config.TELEGRAM_CHAT_ID, 'text': telegram_txt, 'parse_mode': 'HTML'})
                     elif not detalhado: st.warning("Sem valor claro.")
                 else: st.error("Erro no cálculo.")
@@ -313,37 +302,27 @@ with t_hist:
 with t_times:
     st.header("🔎 Raio-X: Matemática vs Realidade")
     c_rank1, c_rank2 = st.columns(2)
-    
     with c_rank1:
-        st.subheader("🤖 Ranking Robô (DC)")
-        st.caption("Qualidade 'Teórica' (Ataque - Defesa)")
+        st.subheader("🤖 Ranking Robô")
         if dc_data:
             lst = [{'Time':t, 'Força':v['ataque']-v['defesa']} for t,v in dc_data['forcas'].items()]
             df_t = pd.DataFrame(lst).sort_values('Força', ascending=False)
             st.dataframe(df_t, hide_index=True, use_container_width=True, height=500)
         else: st.warning("Ranking DC indisponível.")
-
     with c_rank2:
         st.subheader("🏆 Tabela Oficial")
-        st.caption("Classificação Real (Pontos)")
         df_real = get_standings(LIGA_ID, config.TEMPORADA_PARA_ANALISAR)
-        if df_real is not None:
-            st.dataframe(df_real, hide_index=True, use_container_width=True, height=500)
+        if df_real is not None: st.dataframe(df_real, hide_index=True, use_container_width=True, height=500)
         else: st.info("Não foi possível buscar a tabela.")
-    
     st.divider()
     if dc_data:
-        st.subheader("🔮 Simulador")
         tm = st.selectbox("Simular xG do Time:", df_t['Time'] if dc_data else [])
         if tm:
             f = dc_data['forcas'][tm]
-            avg_a, avg_d = df_t['Força'].mean(), df_t['Força'].mean() 
             avg_a = pd.DataFrame([v['ataque'] for v in dc_data['forcas'].values()]).mean()[0]
             avg_d = pd.DataFrame([v['defesa'] for v in dc_data['forcas'].values()]).mean()[0]
-            
             xg_c = np.exp(f['ataque'] + avg_d + dc_data['vantagem_casa'])
             xg_f = np.exp(avg_a + f['defesa'])
-            
             sc1, sc2 = st.columns(2)
             sc1.metric(f"{tm} em CASA", f"{xg_c:.2f} xG", help="vs Time Médio")
             sc2.metric(f"{tm} como VISITANTE", f"{xg_f:.2f} xG", help="vs Time Médio")
