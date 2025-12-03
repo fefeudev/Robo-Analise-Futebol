@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (Otimizado v8.1)
+# app.py - Robô de Valor (v8.2 - Comparação Real vs. Estatística)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -48,11 +48,20 @@ def load_db(_sheet):
         return df, counts.get('Green ✅', 0), counts.get('Red ❌', 0)
     except: return pd.DataFrame(), 0, 0
 
-# --- LÓGICA DE PREVISÃO (CÉREBRO) ---
+# --- LÓGICA DE PREVISÃO & DADOS ---
 @st.cache_data
 def load_dc(liga):
     try:
         with open(f"dc_params_{liga}.json", 'r', encoding='utf-8') as f: return json.load(f)
+    except: return None
+
+@st.cache_data(ttl=3600) # Novo: Pega a tabela de classificação real
+def get_standings(lid, season):
+    try:
+        res = req_api(f"competitions/{lid}/standings", {"season": str(season)})
+        if not res or 'standings' not in res: return None
+        t = res['standings'][0]['table']
+        return pd.DataFrame([{'Pos': i['position'], 'Time': i['team']['name'], 'Pts': i['points'], 'J': i['playedGames'], 'SG': i['goalDifference']} for i in t])
     except: return None
 
 @st.cache_data
@@ -81,9 +90,10 @@ def calc_probs(l_casa, m_visit, rho=0.0):
     home = np.sum(np.tril(probs, -1))
     draw = np.sum(np.diag(probs))
     away = np.sum(np.triu(probs, 1))
-    over = np.sum(probs[np.triu_indices(7, k=0)]) - np.sum(probs[0:3, 0:3]) + probs[2,0] + probs[0,2] + probs[1,1] # Simplificado over 2.5
-    over = 0 # Recalc over loop for safety
-    btts = 0
+    over = np.sum(probs[np.triu_indices(7, k=0)]) - np.sum(probs[0:3, 0:3]) + probs[2,0] + probs[0,2] + probs[1,1] 
+    
+    # Recalcula Over/BTTS com loop seguro
+    over, btts = 0, 0
     for i in range(7):
         for j in range(7):
             if i+j > 2.5: over += probs[i,j]
@@ -125,7 +135,7 @@ def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_gam
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v8.1")
+    st.title("🤖 Robô v8.2")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -172,10 +182,9 @@ with t_jogos:
     if MODE != "FALHA": matches = get_matches(LIGA_ID, st.session_state.dt_sel)
     
     if 'sel_game' not in st.session_state:
-        if not matches: st.info("Sem jogos agendados.")
+        if not matches: st.info("Sem jogos agendados para hoje (Manaus).")
         else:
             for i, m in enumerate(matches):
-                # Pre-calc xG for display
                 _, xg = unified_predict(MODE, dc_data, df_poi, avg_poi, m['casa'], m['fora'], m['dt_iso'])
                 c1, c2 = st.columns([3, 1])
                 if c1.button(f"⚽ {m['hora']} | {m['casa']} x {m['fora']}", key=f"b{i}", use_container_width=True):
@@ -201,15 +210,12 @@ with t_jogos:
             if st.form_submit_button("Analisar"):
                 probs, xg = unified_predict(MODE, dc_data, df_poi, avg_poi, g['casa'], g['fora'], g['dt_iso'])
                 if probs:
-                    # Termometro
                     cw, cd, cl = probs['vitoria_casa'], probs['empate'], probs['vitoria_visitante']
                     res_txt = g['casa'] if cw>cd and cw>cl else (g['fora'] if cl>cw and cl>cd else "Empate")
                     st.info(f"Tendência: {res_txt} (Over 2.5: {probs['over_2_5']:.1%}) | xG: {xg[0]:.2f} - {xg[1]:.2f}")
                     
-                    # Valor
                     ops = {}
                     telegram_txt = f"🔥 <b>{LIGA_KEY}</b>: {g['casa']} x {g['fora']}\n"
-                    
                     c_res = st.columns(3)
                     idx = 0
                     has_val = False
@@ -255,21 +261,43 @@ with t_hist:
                 if st.button("Red ❌"): 
                     db.update_cell(idx+2, 8, "Red ❌")
                     st.cache_data.clear(); st.rerun()
-        
-        if not df_h.empty:
-             st.dataframe(df_h.iloc[::-1], hide_index=True, use_container_width=True)
+        if not df_h.empty: st.dataframe(df_h.iloc[::-1], hide_index=True, use_container_width=True)
 
 with t_times:
+    st.header("🔎 Raio-X: Matemática vs Realidade")
+    c_rank1, c_rank2 = st.columns(2)
+    
+    with c_rank1:
+        st.subheader("🤖 Ranking Robô (DC)")
+        st.caption("Qualidade 'Teórica' (Ataque - Defesa)")
+        if dc_data:
+            lst = [{'Time':t, 'Força':v['ataque']-v['defesa']} for t,v in dc_data['forcas'].items()]
+            df_t = pd.DataFrame(lst).sort_values('Força', ascending=False)
+            st.dataframe(df_t, hide_index=True, use_container_width=True, height=500)
+        else: st.warning("Ranking DC indisponível.")
+
+    with c_rank2:
+        st.subheader("🏆 Tabela Oficial")
+        st.caption("Classificação Real (Pontos)")
+        df_real = get_standings(LIGA_ID, config.TEMPORADA_PARA_ANALISAR)
+        if df_real is not None:
+            st.dataframe(df_real, hide_index=True, use_container_width=True, height=500)
+        else: st.info("Não foi possível buscar a tabela.")
+    
+    st.divider()
     if dc_data:
-        st.subheader("Ranking DC")
-        lst = [{'Time':t, 'Atq':v['ataque'], 'Def':v['defesa'], 'Geral':v['ataque']-v['defesa']} for t,v in dc_data['forcas'].items()]
-        df_t = pd.DataFrame(lst).sort_values('Geral', ascending=False)
-        st.dataframe(df_t, hide_index=True, use_container_width=True)
-        
-        tm = st.selectbox("Simular xG do Time:", df_t['Time'])
+        st.subheader("🔮 Simulador")
+        tm = st.selectbox("Simular xG do Time:", df_t['Time'] if dc_data else [])
         if tm:
             f = dc_data['forcas'][tm]
-            avg_a, avg_d = df_t['Atq'].mean(), df_t['Def'].mean()
+            avg_a, avg_d = df_t['Força'].mean(), df_t['Força'].mean() # Simplificado para média geral
+            # Recalc média real
+            avg_a = pd.DataFrame([v['ataque'] for v in dc_data['forcas'].values()]).mean()[0]
+            avg_d = pd.DataFrame([v['defesa'] for v in dc_data['forcas'].values()]).mean()[0]
+            
             xg_c = np.exp(f['ataque'] + avg_d + dc_data['vantagem_casa'])
             xg_f = np.exp(avg_a + f['defesa'])
-            st.write(f"Em Casa vs Médio: **{xg_c:.2f}** | Fora vs Médio: **{xg_f:.2f}**")
+            
+            sc1, sc2 = st.columns(2)
+            sc1.metric(f"{tm} em CASA", f"{xg_c:.2f} xG", help="vs Time Médio")
+            sc2.metric(f"{tm} como VISITANTE", f"{xg_f:.2f} xG", help="vs Time Médio")
