@@ -11,6 +11,12 @@ import config
 import time
 from datetime import datetime, timedelta
 import json
+import pytz # <--- NOVO IMPORT
+
+# ... (resto dos imports)
+
+# Defina o fuso horário logo no início
+FUSO_MANAUS = pytz.timezone('America/Manaus')
 
 # --- NOVOS IMPORTS DO BANCO DE DADOS ---
 import gspread
@@ -1175,4 +1181,5 @@ with tab_times:
     else:
         st.error("Cérebro não carregado. Selecione uma liga válida na aba 'Analisar Jogos' primeiro.")
 ### MELHORIA 7 - FIM ###
+
 
