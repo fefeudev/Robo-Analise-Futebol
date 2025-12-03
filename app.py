@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v10.0 - Radar de Preço Justo / Lista de Compras)
+# app.py - Robô de Valor (v9.4 - Lista de Compras / Odd Justa)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -117,8 +117,6 @@ def calc_probs(l_casa, m_visit, rho=0.0):
             elif i==1 and j==1: tau = 1 - rho
             val = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
             probs[i, j] = val
-            
-            # Detecta o placar mais provável
             if val > max_prob:
                 max_prob = val
                 placar_provavel = (i, j)
@@ -170,11 +168,9 @@ def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_gam
     except: return None, None
 
 def check_result(probs, score_home, score_away, min_prob):
-    """Verifica se a previsão bateu com o resultado real (Backtest)"""
+    """Backtest check"""
     results = []
     is_green_game = False
-    
-    # 1. Match Winner
     winner = "Casa" if score_home > score_away else ("Fora" if score_away > score_home else "Empate")
     if probs['vitoria_casa'] > min_prob:
         status = "✅" if winner == "Casa" else "❌"
@@ -184,20 +180,17 @@ def check_result(probs, score_home, score_away, min_prob):
         status = "✅" if winner == "Fora" else "❌"
         results.append(f"{status} Fora")
         if status == "✅": is_green_game = True
-        
-    # 2. Over 2.5
     total_gols = score_home + score_away
     if probs['over_2_5'] > min_prob:
         status = "✅" if total_gols > 2.5 else "❌"
         results.append(f"{status} Over")
         if status == "✅": is_green_game = True
-        
     return results, is_green_game
 
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v10.0")
+    st.title("🤖 Robô v9.4")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -210,13 +203,8 @@ with st.sidebar:
     if st.button("Hoje (Manaus)"): st.session_state.dt_sel = datetime.now(FUSO).date()
     
     st.divider()
-    
-    # --- TOGGLE BACKTESTING ---
-    MODO_BACKTEST = st.toggle("🔙 Modo Backtesting (Validar Passado)", value=False)
-    if MODO_BACKTEST:
-        st.warning("⚠️ Backtest ATIVO: Mostrando resultados reais.")
-    # --------------------------
-    
+    MODO_BACKTEST = st.toggle("🔙 Modo Backtesting (Passado)", value=False)
+    if MODO_BACKTEST: st.warning("⚠️ Backtest ATIVO.")
     st.divider()
     st.header("💰 Gestão de Banca")
     BANCA_USUARIO = st.number_input("Banca Total (R$):", value=100.0, step=50.0)
@@ -225,7 +213,7 @@ with st.sidebar:
     min_prob = st.slider("Prob. Mínima %", 0, 100, 60, 5) / 100.0
     detalhado = st.toggle("Modo Detalhado")
 
-# Carga de Dados
+# Carga
 dc_data = load_dc(LIGA_ID)
 df_history, avg_history = get_historical_data(LIGA_ID, config.TEMPORADA_PARA_ANALISAR)
 MODE = "DIXON_COLES" if dc_data else "FALHA"
@@ -243,7 +231,6 @@ with t_jogos:
         d2 = (dtarget + timedelta(days=1)).strftime('%Y-%m-%d')
         status_req = "FINISHED" if is_backtest else "SCHEDULED"
         res = req_api(f"competitions/{lid}/matches", {"dateFrom": d1, "dateTo": d2, "status": status_req})
-        
         if not res or 'matches' not in res: return []
         final = []
         for m in res['matches']:
@@ -267,12 +254,11 @@ with t_jogos:
     if not matches:
         st.info(f"Sem jogos {'TERMINADOS' if MODO_BACKTEST else 'AGENDADOS'} para {st.session_state.dt_sel.strftime('%d/%m/%Y')}.")
     
-    # --- RESUMO DO BACKTEST (DASHBOARD) ---
+    # --- RESUMO BACKTEST ---
     if MODO_BACKTEST and matches:
         total_greens = 0
         total_reds = 0
         total_entradas = 0
-        
         for m in matches:
             if 'placar_casa' in m:
                 p, _ = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
@@ -282,54 +268,56 @@ with t_jogos:
                         total_entradas += 1
                         if is_green: total_greens += 1
                         else: total_reds += 1
-        
         if total_entradas > 0:
             assertiv = (total_greens / total_entradas) * 100
-            st.success(f"📊 **Resumo do Dia (Simulado):** {total_greens} Greens ✅ | {total_reds} Reds ❌ | Assertividade: **{assertiv:.1f}%**")
-        else:
-            st.warning("Nenhuma entrada clara encontrada neste dia (com os filtros atuais).")
-    # ---------------------------------------------
+            st.success(f"📊 **Simulação:** {total_greens} Greens ✅ | {total_reds} Reds ❌ | Assertividade: **{assertiv:.1f}%**")
     
     # --- RADAR DE PREÇO JUSTO (LISTA DE COMPRAS) ---
     if matches and not MODO_BACKTEST:
-        with st.expander("🛒 Radar de Preço Justo (Lista de Compras)", expanded=True):
-            st.info("💡 **Como usar:** Se a odd na Bet365 for MAIOR que o 'Preço Justo' abaixo, é uma aposta de valor.")
+        with st.expander("🛒 Lista de Compras (Odd Justa)", expanded=True):
+            st.info(f"💡 DICA: Aposte se a casa pagar MAIS que a 'Odd Justa' abaixo. (Filtrando > {min_prob*100:.0f}%)")
             radar_results = []
-            with st.spinner("Calculando preços justos..."):
+            telegram_radar_txt = f"🛒 **Lista de Compras - {LIGA_KEY}**\n(Apostar se Odd Real > Odd Justa)\n\n"
+            
+            with st.spinner("Calculando Lista de Compras..."):
                 for m in matches:
                     p, x = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
                     if p:
-                        # Calcula Odd Justa (1 / Probabilidade)
-                        odd_justa_casa = 1 / p['vitoria_casa'] if p['vitoria_casa'] > 0 else 99
-                        odd_justa_fora = 1 / p['vitoria_visitante'] if p['vitoria_visitante'] > 0 else 99
-                        odd_justa_over = 1 / p['over_2_5'] if p['over_2_5'] > 0 else 99
-                        odd_justa_btts = 1 / p['btts_sim'] if p['btts_sim'] > 0 else 99
+                        # Odd Justa = 1 / Probabilidade
+                        # Só adiciona na lista se a probabilidade for maior que o filtro do usuário
+                        if p['vitoria_casa'] > min_prob:
+                            oj = 1/p['vitoria_casa']
+                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Casa Vence', 'Confiança': p['vitoria_casa'], 'Odd Justa': f"@{oj:.2f}"})
+                            telegram_radar_txt += f"⚽ {m['casa']} (Casa) | Justa: @{oj:.2f}\n"
+                            
+                        if p['vitoria_visitante'] > min_prob:
+                            oj = 1/p['vitoria_visitante']
+                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Fora Vence', 'Confiança': p['vitoria_visitante'], 'Odd Justa': f"@{oj:.2f}"})
+                            telegram_radar_txt += f"⚽ {m['fora']} (Fora) | Justa: @{oj:.2f}\n"
 
-                        # Filtra apenas o que tem boa probabilidade para não poluir
-                        if p['vitoria_casa'] > 0.50: 
-                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Mercado': 'Casa Vence', 'Prob': p['vitoria_casa'], 'Preço Justo': f"@{odd_justa_casa:.2f}"})
-                        if p['vitoria_visitante'] > 0.50: 
-                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Mercado': 'Fora Vence', 'Prob': p['vitoria_visitante'], 'Preço Justo': f"@{odd_justa_fora:.2f}"})
-                        if p['over_2_5'] > 0.55: 
-                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Mercado': 'Over 2.5', 'Prob': p['over_2_5'], 'Preço Justo': f"@{odd_justa_over:.2f}"})
-                        if p['btts_sim'] > 0.55: 
-                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Mercado': 'BTTS (Sim)', 'Prob': p['btts_sim'], 'Preço Justo': f"@{odd_justa_btts:.2f}"})
+                        if p['over_2_5'] > min_prob:
+                            oj = 1/p['over_2_5']
+                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Over 2.5', 'Confiança': p['over_2_5'], 'Odd Justa': f"@{oj:.2f}"})
+                            telegram_radar_txt += f"⚽ Over 2.5 em {m['casa']} | Justa: @{oj:.2f}\n"
+
+                        if p['btts_sim'] > min_prob:
+                            oj = 1/p['btts_sim']
+                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'BTTS (Sim)', 'Confiança': p['btts_sim'], 'Odd Justa': f"@{oj:.2f}"})
 
             if radar_results:
-                df_radar = pd.DataFrame(radar_results).sort_values('Prob', ascending=False)
                 st.dataframe(
-                    df_radar, 
-                    hide_index=True, 
-                    use_container_width=True, 
-                    column_config={
-                        "Prob": st.column_config.ProgressColumn("Confiança", format="%.0f%%", min_value=0, max_value=1),
-                        "Preço Justo": st.column_config.TextColumn("🎯 Odd Justa (Min)", help="Aposte se a casa pagar MAIS que isso.")
-                    }
+                    pd.DataFrame(radar_results).sort_values('Confiança', ascending=False), 
+                    hide_index=True, use_container_width=True, 
+                    column_config={"Confiança": st.column_config.ProgressColumn("Confiança", format="%.0f%%", min_value=0, max_value=1)}
                 )
-            else: st.caption("Nenhum 'favorito claro' (>50%) para gerar lista de compras hoje.")
+                if st.button("✈️ Enviar Lista para Telegram"):
+                    if config.TELEGRAM_TOKEN: 
+                        requests.get(f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage", params={'chat_id': config.TELEGRAM_CHAT_ID, 'text': telegram_radar_txt, 'parse_mode': 'Markdown'})
+                        st.success("Lista enviada!")
+            else: st.caption("Nenhuma aposta encontrada com os filtros atuais.")
     # ----------------------------------------------------
 
-    # LISTA DE JOGOS
+    # LISTA DE JOGOS (DETALHADO)
     if 'sel_game' not in st.session_state:
         for i, m in enumerate(matches):
             p, xg = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
@@ -349,10 +337,8 @@ with t_jogos:
             
             if MODO_BACKTEST and p and 'placar_casa' in m:
                 res_check, _ = check_result(p, m['placar_casa'], m['placar_fora'], min_prob)
-                if res_check:
-                    c2.success(" | ".join(res_check))
-                else:
-                    c2.caption("Sem entrada")
+                if res_check: c2.success(" | ".join(res_check))
+                else: c2.caption("Sem entrada")
             else:
                 c2.metric("xG", f"{xg[0]:.2f}-{xg[1]:.2f}" if xg else "-")
 
@@ -382,11 +368,7 @@ with t_jogos:
                 probs, xg = unified_predict(MODE, dc_data, df_history, avg_history, g['casa'], g['fora'], g['dt_iso'])
                 if probs:
                     cw, cd, cl = probs['vitoria_casa'], probs['empate'], probs['vitoria_visitante']
-                    
-                    # --- MOSTRA PLACAR EXATO ---
                     st.info(f"🔮 Placar Mais Provável: **{probs['placar_exato'][0]}x{probs['placar_exato'][1]}**")
-                    # ---------------------------
-                    
                     res_txt = g['casa'] if cw>cd and cw>cl else (g['fora'] if cl>cw and cl>cd else "Empate")
                     st.success(f"Tendência: {res_txt} (Prob Over 2.5: {probs['over_2_5']:.1%})")
                     
@@ -429,38 +411,35 @@ with t_hist:
         c1.metric("Greens", gre)
         c2.metric("Reds", red)
         if (gre+red)>0: c3.metric("Assert.", f"{(gre/(gre+red)*100):.1f}%")
-        
         with st.expander("Atualizar"):
             pend = df_h[df_h['Status']=='Aguardando ⏳']
             sel = st.selectbox("Pendente:", [f"{i}: {r['Jogo']} - {r['Mercado']}" for i, r in pend.iterrows()])
             if sel:
                 idx = int(sel.split(':')[0])
                 if st.button("Green ✅"): 
-                    db.update_cell(idx+2, 8, "Green ✅")
-                    st.cache_data.clear(); st.rerun()
+                    db.update_cell(idx+2, 8, "Green ✅"); st.cache_data.clear(); st.rerun()
                 if st.button("Red ❌"): 
-                    db.update_cell(idx+2, 8, "Red ❌")
-                    st.cache_data.clear(); st.rerun()
+                    db.update_cell(idx+2, 8, "Red ❌"); st.cache_data.clear(); st.rerun()
         if not df_h.empty: st.dataframe(df_h.iloc[::-1], hide_index=True, use_container_width=True)
 
 with t_times:
-    st.header("🔎 Raio-X: Matemática vs Realidade")
+    st.header("🔎 Raio-X")
     c_rank1, c_rank2 = st.columns(2)
     with c_rank1:
-        st.subheader("🤖 Ranking Robô")
+        st.subheader("🤖 Robô")
         if dc_data:
             lst = [{'Time':t, 'Força':v['ataque']-v['defesa']} for t,v in dc_data['forcas'].items()]
             df_t = pd.DataFrame(lst).sort_values('Força', ascending=False)
             st.dataframe(df_t, hide_index=True, use_container_width=True, height=500)
         else: st.warning("Ranking DC indisponível.")
     with c_rank2:
-        st.subheader("🏆 Tabela Oficial")
+        st.subheader("🏆 Oficial")
         df_real = get_standings(LIGA_ID, config.TEMPORADA_PARA_ANALISAR)
         if df_real is not None: st.dataframe(df_real, hide_index=True, use_container_width=True, height=500)
         else: st.info("Não foi possível buscar a tabela.")
     st.divider()
     if dc_data:
-        tm = st.selectbox("Simular xG do Time:", df_t['Time'] if dc_data else [])
+        tm = st.selectbox("Simular xG:", df_t['Time'] if dc_data else [])
         if tm:
             f = dc_data['forcas'][tm]
             avg_a = pd.DataFrame([v['ataque'] for v in dc_data['forcas'].values()]).mean()[0]
@@ -468,5 +447,5 @@ with t_times:
             xg_c = np.exp(f['ataque'] + avg_d + dc_data['vantagem_casa'])
             xg_f = np.exp(avg_a + f['defesa'])
             sc1, sc2 = st.columns(2)
-            sc1.metric(f"{tm} em CASA", f"{xg_c:.2f} xG", help="vs Time Médio")
-            sc2.metric(f"{tm} como VISITANTE", f"{xg_f:.2f} xG", help="vs Time Médio")
+            sc1.metric(f"{tm} em CASA", f"{xg_c:.2f} xG")
+            sc2.metric(f"{tm} como VISITANTE", f"{xg_f:.2f} xG")
