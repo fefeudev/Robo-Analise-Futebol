@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v10.1 - Multigols + Lista de Compras + Backtest)
+# app.py - Robô de Valor (v10.1 - Trap Detector + Dutching + Backtest + Kelly)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -59,6 +59,18 @@ def calc_kelly(prob_ganhar, odd_decimal, fracao_kelly, banca_total):
     stake_pct = f_star * fracao_kelly
     return banca_total * stake_pct, stake_pct * 100
 
+def calc_dutching_dnb(stake_total, odd_winner, odd_draw):
+    """Calcula stakes para DNB sintético (Empate devolve aposta)"""
+    if odd_draw <= 1 or odd_winner <= 1: return 0, 0, 0
+    # Aposta no empate para recuperar o total investido: Stake_Empate * Odd_Empate = Stake_Total
+    stake_draw = stake_total / odd_draw
+    stake_winner = stake_total - stake_draw
+    
+    if stake_winner <= 0: return 0, 0, 0 # Impossível fazer DNB com essas odds
+    
+    lucro = (stake_winner * odd_winner) - stake_total
+    return stake_winner, stake_draw, lucro
+
 # --- LÓGICA DE DADOS & FORMA ---
 @st.cache_data
 def load_dc(liga):
@@ -100,13 +112,13 @@ def get_form_str(team, df):
             else: res += "❌"
     return f"({res})"
 
-# --- CÁLCULO DE PROBABILIDADES (COM MULTIGOLS) ---
+# --- CÁLCULO DE PROBABILIDADES ---
 def calc_probs(l_casa, m_visit, rho=0.0):
     probs = np.zeros((7, 7))
     max_prob = 0
     placar_provavel = (0, 0)
     
-    # Acumuladores de Faixa
+    # Acumuladores de Faixa (Multigols)
     prob_0_1 = 0
     prob_2_3 = 0
     prob_4_plus = 0
@@ -122,20 +134,18 @@ def calc_probs(l_casa, m_visit, rho=0.0):
             p = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
             probs[i, j] = p
             
-            # Placar mais provável
             if p > max_prob:
                 max_prob = p
                 placar_provavel = (i, j)
             
-            # Faixas de Gols
-            total_gols = i + j
-            if total_gols <= 1: prob_0_1 += p
-            elif total_gols <= 3: prob_2_3 += p
+            # Faixas
+            tg = i + j
+            if tg <= 1: prob_0_1 += p
+            elif tg <= 3: prob_2_3 += p
             else: prob_4_plus += p
                 
     total = np.sum(probs)
     if total == 0: return None
-    
     home = np.sum(np.tril(probs, -1))
     draw = np.sum(np.diag(probs))
     away = np.sum(np.triu(probs, 1))
@@ -151,9 +161,7 @@ def calc_probs(l_casa, m_visit, rho=0.0):
         'over_2_5': over/total, 'btts_sim': btts/total,
         'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total,
         'placar_exato': placar_provavel,
-        'faixa_0_1': prob_0_1/total,
-        'faixa_2_3': prob_2_3/total,
-        'faixa_4_plus': prob_4_plus/total
+        'faixa_0_1': prob_0_1/total, 'faixa_2_3': prob_2_3/total, 'faixa_4_plus': prob_4_plus/total
     }
 
 def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_game):
@@ -189,17 +197,13 @@ def check_result(probs, score_home, score_away, min_prob):
     winner = "Casa" if score_home > score_away else ("Fora" if score_away > score_home else "Empate")
     if probs['vitoria_casa'] > min_prob:
         status = "✅" if winner == "Casa" else "❌"
-        results.append(f"{status} Casa")
-        if status == "✅": is_green_game = True
+        results.append(f"{status} Casa"); is_green_game = True if status=="✅" else is_green_game
     elif probs['vitoria_visitante'] > min_prob:
         status = "✅" if winner == "Fora" else "❌"
-        results.append(f"{status} Fora")
-        if status == "✅": is_green_game = True
-    total_gols = score_home + score_away
+        results.append(f"{status} Fora"); is_green_game = True if status=="✅" else is_green_game
     if probs['over_2_5'] > min_prob:
-        status = "✅" if total_gols > 2.5 else "❌"
-        results.append(f"{status} Over")
-        if status == "✅": is_green_game = True
+        status = "✅" if (score_home+score_away)>2.5 else "❌"
+        results.append(f"{status} Over"); is_green_game = True if status=="✅" else is_green_game
     return results, is_green_game
 
 # --- UI & FLUXO ---
@@ -218,7 +222,7 @@ with st.sidebar:
     if st.button("Hoje (Manaus)"): st.session_state.dt_sel = datetime.now(FUSO).date()
     
     st.divider()
-    MODO_BACKTEST = st.toggle("🔙 Modo Backtesting (Passado)", value=False)
+    MODO_BACKTEST = st.toggle("🔙 Modo Backtesting", value=False)
     if MODO_BACKTEST: st.warning("⚠️ Backtest ATIVO.")
     st.divider()
     st.header("💰 Gestão de Banca")
@@ -251,12 +255,7 @@ with t_jogos:
         for m in res['matches']:
             dt_loc = pytz.utc.localize(datetime.strptime(m['utcDate'], "%Y-%m-%dT%H:%M:%SZ")).astimezone(FUSO)
             if dt_loc.date() == dtarget:
-                item = {
-                    'hora': dt_loc.strftime('%H:%M'), 
-                    'casa': m['homeTeam']['name'], 
-                    'fora': m['awayTeam']['name'], 
-                    'dt_iso': dt_loc.strftime('%Y-%m-%d')
-                }
+                item = {'hora': dt_loc.strftime('%H:%M'), 'casa': m['homeTeam']['name'], 'fora': m['awayTeam']['name'], 'dt_iso': dt_loc.strftime('%Y-%m-%d')}
                 if is_backtest and m['score']['fullTime']['home'] is not None:
                     item['placar_casa'] = m['score']['fullTime']['home']
                     item['placar_fora'] = m['score']['fullTime']['away']
@@ -269,7 +268,7 @@ with t_jogos:
     if not matches:
         st.info(f"Sem jogos {'TERMINADOS' if MODO_BACKTEST else 'AGENDADOS'} para {st.session_state.dt_sel.strftime('%d/%m/%Y')}.")
     
-    # RESUMO BACKTEST
+    # BACKTEST DASHBOARD
     if MODO_BACKTEST and matches:
         total_greens, total_reds, total_entradas = 0, 0, 0
         for m in matches:
@@ -288,46 +287,33 @@ with t_jogos:
     # LISTA DE COMPRAS
     if matches and not MODO_BACKTEST:
         with st.expander("🛒 Lista de Compras (Odd Justa)", expanded=True):
+            st.info(f"💡 Aposte se a casa pagar MAIS que a 'Odd Justa'.")
             radar_results = []
-            telegram_radar_txt = f"🛒 **Lista de Compras - {LIGA_KEY}**\n\n"
             with st.spinner("Gerando lista..."):
                 for m in matches:
                     p, x = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
                     if p:
-                        if p['vitoria_casa'] > min_prob:
-                            oj = 1/p['vitoria_casa']
-                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Casa', 'Confiança': p['vitoria_casa'], 'Odd Justa': f"@{oj:.2f}"})
-                            telegram_radar_txt += f"⚽ {m['casa']} (Casa) | Justa: @{oj:.2f}\n"
-                        if p['vitoria_visitante'] > min_prob:
-                            oj = 1/p['vitoria_visitante']
-                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Fora', 'Confiança': p['vitoria_visitante'], 'Odd Justa': f"@{oj:.2f}"})
-                            telegram_radar_txt += f"⚽ {m['fora']} (Fora) | Justa: @{oj:.2f}\n"
-                        if p['over_2_5'] > min_prob:
-                            oj = 1/p['over_2_5']
-                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Over 2.5', 'Confiança': p['over_2_5'], 'Odd Justa': f"@{oj:.2f}"})
-                            telegram_radar_txt += f"⚽ Over 2.5 {m['casa']} | Justa: @{oj:.2f}\n"
-                        if p['btts_sim'] > min_prob:
-                            oj = 1/p['btts_sim']
-                            radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'BTTS', 'Confiança': p['btts_sim'], 'Odd Justa': f"@{oj:.2f}"})
-
+                        if p['vitoria_casa'] > min_prob: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Casa', 'Confiança': p['vitoria_casa'], 'Odd Justa': f"@{1/p['vitoria_casa']:.2f}"})
+                        if p['vitoria_visitante'] > min_prob: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Fora', 'Confiança': p['vitoria_visitante'], 'Odd Justa': f"@{1/p['vitoria_visitante']:.2f}"})
+                        if p['over_2_5'] > min_prob: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': 'Over 2.5', 'Confiança': p['over_2_5'], 'Odd Justa': f"@{1/p['over_2_5']:.2f}"})
             if radar_results:
-                df_radar = pd.DataFrame(radar_results).sort_values('Confiança', ascending=False)
-                st.dataframe(df_radar, hide_index=True, use_container_width=True, column_config={"Confiança": st.column_config.ProgressColumn("Confiança", format="%.0f%%", min_value=0, max_value=1)})
-                if st.button("✈️ Enviar Telegram"):
-                    if config.TELEGRAM_TOKEN: requests.get(f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage", params={'chat_id': config.TELEGRAM_CHAT_ID, 'text': telegram_radar_txt, 'parse_mode': 'Markdown'}); st.success("Enviado!")
+                st.dataframe(pd.DataFrame(radar_results).sort_values('Confiança', ascending=False), hide_index=True, use_container_width=True, column_config={"Confiança": st.column_config.ProgressColumn("Confiança", format="%.0f%%", min_value=0, max_value=1)})
             else: st.caption("Nenhuma aposta encontrada com os filtros.")
 
-    # LISTA JOGOS
+    # LISTA DE JOGOS
     if 'sel_game' not in st.session_state:
         for i, m in enumerate(matches):
             p, xg = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
             form_casa = get_form_str(m['casa'], df_history)
             form_fora = get_form_str(m['fora'], df_history)
+            
             c1, c2 = st.columns([3, 1])
             label = f"⚽ {m['hora']} | {m['casa']} {form_casa} x {form_fora} {m['fora']}"
             if MODO_BACKTEST and 'placar_casa' in m: label += f" ({m['placar_casa']} - {m['placar_fora']})"
+            
             if c1.button(label, key=f"b{i}", use_container_width=True):
                 if not MODO_BACKTEST: st.session_state.sel_game = m; st.rerun()
+            
             if MODO_BACKTEST and p and 'placar_casa' in m:
                 res_check, _ = check_result(p, m['placar_casa'], m['placar_fora'], min_prob)
                 if res_check: c2.success(" | ".join(res_check))
@@ -354,12 +340,28 @@ with t_jogos:
                 if probs:
                     cw, cd, cl = probs['vitoria_casa'], probs['empate'], probs['vitoria_visitante']
                     
-                    # --- MOSTRAR MULTIGOLS ---
+                    # --- NOVO: CALCULADORA DE PROTEÇÃO (DUTCHING) ---
+                    if in_odds.get('vitoria_casa') and in_odds.get('empate'):
+                        with st.expander("🛡️ Estratégia de Proteção (Empate Anula)", expanded=False):
+                            s_real = BANCA_USUARIO * 0.02 # Stake base de exemplo ou Kelly se preferir
+                            if probs['vitoria_casa'] > probs['vitoria_visitante']:
+                                s_win, s_draw, lucro = calc_dutching_dnb(s_real, in_odds['vitoria_casa'], in_odds['empate'])
+                                if s_win > 0:
+                                    st.write(f"Aposta Total: R$ {s_real:.2f} (Lucro Potencial: R$ {lucro:.2f})")
+                                    st.write(f"• **Casa (@{in_odds['vitoria_casa']}):** R$ {s_win:.2f}")
+                                    st.write(f"• **Empate (@{in_odds['empate']}):** R$ {s_draw:.2f}")
+                            elif probs['vitoria_visitante'] > probs['vitoria_casa']:
+                                s_win, s_draw, lucro = calc_dutching_dnb(s_real, in_odds['vitoria_visitante'], in_odds['empate'])
+                                if s_win > 0:
+                                    st.write(f"Aposta Total: R$ {s_real:.2f} (Lucro Potencial: R$ {lucro:.2f})")
+                                    st.write(f"• **Fora (@{in_odds['vitoria_visitante']}):** R$ {s_win:.2f}")
+                                    st.write(f"• **Empate (@{in_odds['empate']}):** R$ {s_draw:.2f}")
+                    # ------------------------------------------------
+                    
                     c_mg1, c_mg2, c_mg3 = st.columns(3)
                     c_mg1.metric("0-1 Gol", f"{probs['faixa_0_1']:.1%}")
                     c_mg2.metric("2-3 Gols", f"{probs['faixa_2_3']:.1%}")
                     c_mg3.metric("4+ Gols", f"{probs['faixa_4_plus']:.1%}")
-                    # -------------------------
                     
                     st.info(f"🔮 Placar Provável: **{probs['placar_exato'][0]}x{probs['placar_exato'][1]}**")
                     telegram_txt = f"🔥 <b>{LIGA_KEY}</b>: {g['casa']} x {g['fora']}\n"
@@ -371,6 +373,11 @@ with t_jogos:
                         p_bot = probs[k]
                         val = (p_bot - (1/odd_user)) * 100
                         is_green = val > 5 and p_bot > min_prob
+                        
+                        # --- NOVO: DETECTOR DE ARMADILHA ---
+                        if val > 40: st.warning(f"⚠️ CUIDADO ({MERCADOS_INFO[k]}): Valor excessivo ({val:.0f}%). Verifique desfalques.")
+                        # -----------------------------------
+                        
                         stake_reais, stake_pct = 0.0, 0.0
                         if is_green: stake_reais, stake_pct = calc_kelly(p_bot, odd_user, KELLY_FRACAO, BANCA_USUARIO)
                         
