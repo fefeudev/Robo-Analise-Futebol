@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v9.2 - Placar Exato + Resumo Backtest + Kelly)
+# app.py - Robô de Valor (v9.3 - Limpo: Placar Exato + Resumo Backtest + Kelly)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -77,7 +77,7 @@ def get_standings(lid, season):
 
 @st.cache_data
 def get_historical_data(liga, temp):
-    """Baixa histórico para Poisson, H2H e Forma"""
+    """Baixa histórico para Poisson e Forma"""
     data = req_api(f"competitions/{liga}/matches", {"season": str(temp), "status": "FINISHED"})
     if not data or not data.get("matches"): return None, None
     matches = [{'data_jogo': m['utcDate'][:10], 'TimeCasa': m['homeTeam']['name'], 'TimeVisitante': m['awayTeam']['name'], 'GolsCasa': int(m['score']['fullTime']['home']), 'GolsVisitante': int(m['score']['fullTime']['away'])} for m in data['matches'] if m['score']['fullTime']['home'] is not None]
@@ -102,14 +102,6 @@ def get_form_str(team, df):
             else: res += "❌"
     return f"({res})"
 
-def get_h2h_stats(home, away, df):
-    """Retorna os últimos confrontos diretos"""
-    if df is None or df.empty: return None
-    mask = ((df['TimeCasa'] == home) & (df['TimeVisitante'] == away)) | \
-           ((df['TimeCasa'] == away) & (df['TimeVisitante'] == home))
-    h2h_df = df[mask].sort_values('data_jogo', ascending=False)
-    return h2h_df
-
 # --- CÁLCULO DE PROBABILIDADES ---
 def calc_probs(l_casa, m_visit, rho=0.0):
     probs = np.zeros((7, 7))
@@ -126,7 +118,7 @@ def calc_probs(l_casa, m_visit, rho=0.0):
             val = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
             probs[i, j] = val
             
-            # NOVO: Detecta o placar mais provável
+            # Detecta o placar mais provável
             if val > max_prob:
                 max_prob = val
                 placar_provavel = (i, j)
@@ -147,7 +139,7 @@ def calc_probs(l_casa, m_visit, rho=0.0):
         'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
         'over_2_5': over/total, 'btts_sim': btts/total,
         'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total,
-        'placar_exato': placar_provavel # Retorna o placar (gols_casa, gols_fora)
+        'placar_exato': placar_provavel
     }
 
 def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_game):
@@ -205,7 +197,7 @@ def check_result(probs, score_home, score_away, min_prob):
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v9.2")
+    st.title("🤖 Robô v9.3")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -275,19 +267,18 @@ with t_jogos:
     if not matches:
         st.info(f"Sem jogos {'TERMINADOS' if MODO_BACKTEST else 'AGENDADOS'} para {st.session_state.dt_sel.strftime('%d/%m/%Y')}.")
     
-    # --- NOVO: RESUMO DO BACKTEST (DASHBOARD) ---
+    # --- RESUMO DO BACKTEST (DASHBOARD) ---
     if MODO_BACKTEST and matches:
         total_greens = 0
         total_reds = 0
         total_entradas = 0
         
-        # Faz um loop rápido para calcular estatísticas
         for m in matches:
             if 'placar_casa' in m:
                 p, _ = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
                 if p:
                     res_check, is_green = check_result(p, m['placar_casa'], m['placar_fora'], min_prob)
-                    if res_check: # Se houve alguma aposta sugerida
+                    if res_check:
                         total_entradas += 1
                         if is_green: total_greens += 1
                         else: total_reds += 1
@@ -356,14 +347,6 @@ with t_jogos:
         st.markdown(f"### {g['casa']} vs {g['fora']}")
         st.link_button("Apostar na Bet365 🟢", "https://www.bet365.com/#/AS/B1/", use_container_width=True)
         
-        # H2H
-        with st.expander("⚔️ Histórico de Confronto Direto (H2H)"):
-            h2h_df = get_h2h_stats(g['casa'], g['fora'], df_history)
-            if h2h_df is not None and not h2h_df.empty:
-                st.dataframe(h2h_df[['data_jogo', 'TimeCasa', 'TimeVisitante', 'GolsCasa', 'GolsVisitante']].head(5), hide_index=True, use_container_width=True)
-            else:
-                st.info("Sem confrontos diretos recentes.")
-
         with st.form("f1"):
             st.write("Odds:")
             oc = st.columns(4)
@@ -378,18 +361,9 @@ with t_jogos:
                 if probs:
                     cw, cd, cl = probs['vitoria_casa'], probs['empate'], probs['vitoria_visitante']
                     
-                    # --- NOVO: PLACAR EXATO E GRÁFICO DE DOMINÂNCIA ---
-                    c_info1, c_info2 = st.columns(2)
-                    with c_info1:
-                        st.info(f"🔮 Placar Mais Provável: **{probs['placar_exato'][0]}x{probs['placar_exato'][1]}**")
-                    with c_info2:
-                        st.write("📊 **Força Ofensiva (xG)**")
-                        chart_data = pd.DataFrame({
-                            'Time': [g['casa'], g['fora']],
-                            'xG': [xg[0], xg[1]]
-                        })
-                        st.bar_chart(chart_data, x='Time', y='xG', color=["#4A90E2", "#FF4B4B"])
-                    # --------------------------------------------------
+                    # --- MOSTRA PLACAR EXATO ---
+                    st.info(f"🔮 Placar Mais Provável: **{probs['placar_exato'][0]}x{probs['placar_exato'][1]}**")
+                    # ---------------------------
                     
                     res_txt = g['casa'] if cw>cd and cw>cl else (g['fora'] if cl>cw and cl>cd else "Empate")
                     st.success(f"Tendência: {res_txt} (Prob Over 2.5: {probs['over_2_5']:.1%})")
