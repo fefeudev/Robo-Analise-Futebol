@@ -1,4 +1,4 @@
-# app.py - Robô de Valor (v9.0 - Forma Visual + Link Bet365 + Kelly + Radar)
+# app.py - Robô de Valor (v9.1 - Backtesting / Máquina do Tempo)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import config, time, json, pytz, gspread
@@ -77,7 +77,6 @@ def get_standings(lid, season):
 
 @st.cache_data
 def get_historical_data(liga, temp):
-    """Baixa histórico para Poisson e para os Indicadores de Forma"""
     data = req_api(f"competitions/{liga}/matches", {"season": str(temp), "status": "FINISHED"})
     if not data or not data.get("matches"): return None, None
     matches = [{'data_jogo': m['utcDate'][:10], 'TimeCasa': m['homeTeam']['name'], 'TimeVisitante': m['awayTeam']['name'], 'GolsCasa': int(m['score']['fullTime']['home']), 'GolsVisitante': int(m['score']['fullTime']['away'])} for m in data['matches'] if m['score']['fullTime']['home'] is not None]
@@ -86,20 +85,16 @@ def get_historical_data(liga, temp):
     return df, {'media_gols_casa': df['GolsCasa'].mean(), 'media_gols_visitante': df['GolsVisitante'].mean()}
 
 def get_form_str(team, df):
-    """Gera a string de forma (ex: ✅❌➖✅✅) baseada nos últimos 5 jogos"""
     if df is None or df.empty: return ""
-    # Filtra jogos do time
     matches = df[(df['TimeCasa'] == team) | (df['TimeVisitante'] == team)].sort_values('data_jogo').tail(5)
     if matches.empty: return "(?)"
-    
     res = ""
     for _, m in matches.iterrows():
-        # Lógica: Verifica se ganhou, empatou ou perdeu
         if m['TimeCasa'] == team:
             if m['GolsCasa'] > m['GolsVisitante']: res += "✅"
             elif m['GolsCasa'] == m['GolsVisitante']: res += "➖"
             else: res += "❌"
-        else: # Visitante
+        else:
             if m['GolsVisitante'] > m['GolsCasa']: res += "✅"
             elif m['GolsVisitante'] == m['GolsCasa']: res += "➖"
             else: res += "❌"
@@ -160,10 +155,44 @@ def unified_predict(mode, dc_data, poisson_df, poisson_avg, home, away, date_gam
         return probs, xg
     except: return None, None
 
+def check_result(probs, score_home, score_away, min_prob):
+    """Verifica se a previsão bateu com o resultado real (Backtest)"""
+    results = []
+    
+    # 1. Match Winner
+    winner = "Casa" if score_home > score_away else ("Fora" if score_away > score_home else "Empate")
+    p_win = 0
+    label = ""
+    
+    if probs['vitoria_casa'] > min_prob:
+        p_win = probs['vitoria_casa']
+        label = "Casa"
+        status = "✅" if winner == "Casa" else "❌"
+        results.append(f"{status} {label} ({p_win:.0%})")
+    elif probs['vitoria_visitante'] > min_prob:
+        p_win = probs['vitoria_visitante']
+        label = "Fora"
+        status = "✅" if winner == "Fora" else "❌"
+        results.append(f"{status} {label} ({p_win:.0%})")
+        
+    # 2. Over 2.5
+    total_gols = score_home + score_away
+    if probs['over_2_5'] > min_prob:
+        status = "✅" if total_gols > 2.5 else "❌"
+        results.append(f"{status} Over 2.5 ({probs['over_2_5']:.0%})")
+        
+    # 3. BTTS
+    btts_real = (score_home > 0 and score_away > 0)
+    if probs['btts_sim'] > min_prob:
+        status = "✅" if btts_real else "❌"
+        results.append(f"{status} BTTS ({probs['btts_sim']:.0%})")
+        
+    return results
+
 # --- UI & FLUXO ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v9.0")
+    st.title("🤖 Robô v9.1")
     LIGA_KEY = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ID = LIGAS[LIGA_KEY]
     
@@ -176,6 +205,14 @@ with st.sidebar:
     if st.button("Hoje (Manaus)"): st.session_state.dt_sel = datetime.now(FUSO).date()
     
     st.divider()
+    
+    # --- TOGGLE BACKTESTING ---
+    MODO_BACKTEST = st.toggle("🔙 Modo Backtesting (Validar Passado)", value=False)
+    if MODO_BACKTEST:
+        st.warning("⚠️ Modo Backtest ATIVO: Mostrando resultados de jogos passados.")
+    # --------------------------
+    
+    st.divider()
     st.header("💰 Gestão de Banca")
     BANCA_USUARIO = st.number_input("Banca Total (R$):", value=100.0, step=50.0)
     KELLY_FRACAO = st.slider("Fator Kelly:", 0.01, 0.50, 0.10, 0.01)
@@ -185,13 +222,9 @@ with st.sidebar:
 
 # Carga de Dados
 dc_data = load_dc(LIGA_ID)
-
-# Sempre carrega histórico para usar na Forma (Bolinhas), mesmo se usar DC
 df_history, avg_history = get_historical_data(LIGA_ID, config.TEMPORADA_PARA_ANALISAR)
-
 MODE = "DIXON_COLES" if dc_data else "FALHA"
-if not dc_data and df_history is not None:
-    MODE = "POISSON_RECENTE"
+if not dc_data and df_history is not None: MODE = "POISSON_RECENTE"
 
 # Abas
 t_jogos, t_hist, t_times = st.tabs(["Jogos", "Histórico", "Times"])
@@ -200,27 +233,43 @@ with t_jogos:
     st.subheader(f"{EMOJIS.get(LIGA_ID,'')} {LIGA_KEY} - {MODE}")
     
     @st.cache_data(ttl=300)
-    def get_matches(lid, dtarget):
+    def get_matches(lid, dtarget, is_backtest):
         d1 = dtarget.strftime('%Y-%m-%d')
         d2 = (dtarget + timedelta(days=1)).strftime('%Y-%m-%d')
-        res = req_api(f"competitions/{lid}/matches", {"dateFrom": d1, "dateTo": d2, "status": "SCHEDULED"})
+        # Se for Backtest, busca FINISHED, se não, SCHEDULED
+        status_req = "FINISHED" if is_backtest else "SCHEDULED"
+        res = req_api(f"competitions/{lid}/matches", {"dateFrom": d1, "dateTo": d2, "status": status_req})
+        
         if not res or 'matches' not in res: return []
         final = []
         for m in res['matches']:
             dt_loc = pytz.utc.localize(datetime.strptime(m['utcDate'], "%Y-%m-%dT%H:%M:%SZ")).astimezone(FUSO)
             if dt_loc.date() == dtarget:
-                final.append({'hora': dt_loc.strftime('%H:%M'), 'casa': m['homeTeam']['name'], 'fora': m['awayTeam']['name'], 'dt_iso': dt_loc.strftime('%Y-%m-%d')})
+                item = {
+                    'hora': dt_loc.strftime('%H:%M'), 
+                    'casa': m['homeTeam']['name'], 
+                    'fora': m['awayTeam']['name'], 
+                    'dt_iso': dt_loc.strftime('%Y-%m-%d')
+                }
+                # Se for backtest, pega o placar
+                if is_backtest and m['score']['fullTime']['home'] is not None:
+                    item['placar_casa'] = m['score']['fullTime']['home']
+                    item['placar_fora'] = m['score']['fullTime']['away']
+                final.append(item)
         return final
 
     matches = []
-    if MODE != "FALHA": matches = get_matches(LIGA_ID, st.session_state.dt_sel)
+    if MODE != "FALHA": matches = get_matches(LIGA_ID, st.session_state.dt_sel, MODO_BACKTEST)
     
-    # RADAR DO DIA
-    if matches:
+    if not matches:
+        st.info(f"Sem jogos {'TERMINADOS' if MODO_BACKTEST else 'AGENDADOS'} para {st.session_state.dt_sel.strftime('%d/%m/%Y')}.")
+    
+    # RADAR (Só aparece se NÃO for backtest)
+    if matches and not MODO_BACKTEST:
         with st.expander("📡 Escanear Oportunidades do Dia (Radar)", expanded=False):
             if st.button("Buscar Melhores Jogos"):
                 radar_results = []
-                with st.spinner("Analisando matematicamente todos os jogos..."):
+                with st.spinner("Analisando..."):
                     for m in matches:
                         p, x = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
                         if p:
@@ -229,37 +278,50 @@ with t_jogos:
                             if p['over_2_5'] > 0.60: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Tendência Gols', 'Prob': p['over_2_5']})
                             if p['btts_sim'] > 0.60: radar_results.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Tipo': 'Ambas Marcam', 'Prob': p['btts_sim']})
                 if radar_results:
-                    df_radar = pd.DataFrame(radar_results).sort_values('Prob', ascending=False)
-                    st.dataframe(df_radar, hide_index=True, use_container_width=True, column_config={"Prob": st.column_config.ProgressColumn("Probabilidade", format="%.1f%%", min_value=0, max_value=1)})
+                    st.dataframe(pd.DataFrame(radar_results).sort_values('Prob', ascending=False), hide_index=True, use_container_width=True, column_config={"Prob": st.column_config.ProgressColumn("Probabilidade", format="%.1f%%", min_value=0, max_value=1)})
                 else: st.info("Nenhuma oportunidade >60% encontrada.")
 
+    # LISTA DE JOGOS
     if 'sel_game' not in st.session_state:
-        if not matches: st.info("Sem jogos agendados para hoje (Manaus).")
-        else:
-            for i, m in enumerate(matches):
-                _, xg = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
-                
-                # --- GERA INDICADORES DE FORMA ---
-                form_casa = get_form_str(m['casa'], df_history)
-                form_fora = get_form_str(m['fora'], df_history)
-                
-                c1, c2 = st.columns([3, 1])
-                # Botão com visual de forma
-                if c1.button(f"⚽ {m['hora']} | {m['casa']} {form_casa} x {form_fora} {m['fora']}", key=f"b{i}", use_container_width=True):
+        for i, m in enumerate(matches):
+            p, xg = unified_predict(MODE, dc_data, df_history, avg_history, m['casa'], m['fora'], m['dt_iso'])
+            form_casa = get_form_str(m['casa'], df_history)
+            form_fora = get_form_str(m['fora'], df_history)
+            
+            c1, c2 = st.columns([3, 1])
+            
+            label_btn = f"⚽ {m['hora']} | {m['casa']} {form_casa} x {form_fora} {m['fora']}"
+            if MODO_BACKTEST and 'placar_casa' in m:
+                label_btn += f" (Final: {m['placar_casa']} - {m['placar_fora']})"
+            
+            if c1.button(label_btn, key=f"b{i}", use_container_width=True):
+                if not MODO_BACKTEST:
                     st.session_state.sel_game = m
                     st.rerun()
+            
+            # Se for Backtest, mostra resultado direto na lista
+            if MODO_BACKTEST and p and 'placar_casa' in m:
+                res_check = check_result(p, m['placar_casa'], m['placar_fora'], min_prob)
+                if res_check:
+                    c2.success(" | ".join(res_check))
+                else:
+                    c2.caption("Sem entrada clara")
+            else:
                 c2.metric("xG", f"{xg[0]:.2f}-{xg[1]:.2f}" if xg else "-")
+
     else:
+        # TELA DE ANÁLISE (Só acessível se Backtest estiver OFF)
+        if MODO_BACKTEST:
+            del st.session_state.sel_game
+            st.rerun()
+            
         g = st.session_state.sel_game
         if st.button("⬅️ Voltar"): 
             del st.session_state.sel_game
             st.rerun()
         
         st.markdown(f"### {g['casa']} vs {g['fora']}")
-        
-        # --- LINK BET365 ---
         st.link_button("Apostar na Bet365 🟢", "https://www.bet365.com/#/AS/B1/", use_container_width=True)
-        # -------------------
         
         with st.form("f1"):
             st.write("Odds:")
