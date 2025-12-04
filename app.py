@@ -143,7 +143,7 @@ def get_historico_fd(liga_code, season):
     except: return None, None
 
 def calc_probs(l_casa, m_visit, rho=0.0):
-    probs = np.zeros((7, 7)); max_prob, placar = 0, (0,0)
+    probs = np.zeros((7, 7)); max_prob, placar = 0, (0,0); p01, p23, p4p = 0,0,0
     for i in range(7):
         for j in range(7):
             tau = 1.0
@@ -154,22 +154,18 @@ def calc_probs(l_casa, m_visit, rho=0.0):
             p = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
             probs[i, j] = p
             if p > max_prob: max_prob, placar = p, (i, j)
-    
-    tot = np.sum(probs)
-    if tot==0: return None
+            if (i+j)<=1: p01+=p
+            elif (i+j)<=3: p23+=p
+            else: p4p+=p
+    total = np.sum(probs)
+    if total==0: return None
     home, draw, away = np.sum(np.tril(probs,-1)), np.sum(np.diag(probs)), np.sum(np.triu(probs,1))
     over, btts = 0, 0
     for i in range(7):
         for j in range(7):
             if (i+j)>2.5: over+=probs[i,j]
             if i>0 and j>0: btts+=probs[i,j]
-    
-    return {
-        'vitoria_casa': home/tot, 'empate': draw/tot, 'vitoria_visitante': away/tot,
-        'over_2_5': over/tot, 'btts_sim': btts/tot,
-        'chance_dupla_1X': (home+draw)/tot, 'chance_dupla_X2': (draw+away)/tot, 'chance_dupla_12': (home+away)/tot,
-        'placar': placar
-    }
+    return {'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total, 'over_2_5': over/total, 'btts_sim': btts/total, 'placar': placar, 'f_01': p01/total, 'f_23': p23/total}
 
 def predict(mode, dc, df_poi, avg_poi, home, away):
     xg = (0,0)
@@ -205,7 +201,7 @@ def calc_kelly(prob, odd, fracao, banca):
 # --- INTERFACE ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô v12.3")
+    st.title("🤖 Robô Híbrido v12.3")
     LIGA_NOME = st.selectbox("Liga:", LIGAS_FD.keys())
     LIGA_CODE = LIGAS_FD[LIGA_NOME]
     dt_sel = st.date_input("Data:", datetime.now(FUSO).date())
@@ -276,6 +272,7 @@ with t_jogos:
                 p, xg = predict(MODE, dc_data, df_hist, avg_hist, m['casa'], m['fora'])
                 f_c = get_form(m['casa'], df_hist)
                 f_f = get_form(m['fora'], df_hist)
+                
                 c1, c2 = st.columns([3, 1])
                 status = m['status'] 
                 if c1.button(f"{status} {m['hora']} | {m['casa']} {f_c} x {f_f} {m['fora']}", key=f"b{i}", use_container_width=True):
