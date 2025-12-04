@@ -1,4 +1,4 @@
-# app.py - Robô v12.9 (Mapeamento Brasileiro Perfeito + Fuso + API Híbrida)
+# app.py - Robô v13.1 (Mapeamento Brasil + Espanha + Alemanha)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import time, json, pytz, gspread, difflib
@@ -7,76 +7,66 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 FUSO = pytz.timezone('America/Manaus')
-st.set_page_config(page_title="Robô Híbrido v12.9", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Robô Híbrido v13.1", page_icon="🤖", layout="wide")
 
 st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}a[href]{text-decoration:none;color:white;}</style>""", unsafe_allow_html=True)
 
-# --- 2. DICIONÁRIO DE-PARA (TIMES BRASILEIROS MAPEADOS) ---
-# Esquerda: API Antiga (Football-Data) | Direita: API Nova (Sua Lista)
+# --- 2. DICIONÁRIO DE-PARA (TIMES MAPEADOS) ---
+# Esquerda: API Antiga (Football-Data) | Direita: API Nova (Seu JSON)
 DE_PARA_TIMES = {
-    # --- SÉRIE A & B (Principais) ---
-    "Cruzeiro EC": "Cruzeiro",
-    "São Paulo FC": "Sao Paulo",
-    "SC Corinthians Paulista": "Corinthians",
-    "SE Palmeiras": "Palmeiras",
-    "CR Flamengo": "Flamengo",
-    "Fluminense FC": "Fluminense",
-    "Botafogo FR": "Botafogo",
-    "CR Vasco da Gama": "Vasco DA Gama",
-    "Clube Atlético Mineiro": "Atletico-MG",
-    "EC Bahia": "Bahia",
-    "Fortaleza EC": "Fortaleza EC", # Na sua lista é Fortaleza EC mesmo
-    "Cuiabá EC": "Cuiaba",
-    "AC Goianiense": "Atletico Goianiense",
-    "EC Juventude": "Juventude",
-    "CA Paranaense": "Atletico Paranaense",
-    "Red Bull Bragantino": "RB Bragantino", # Sua lista usa RB
-    "Criciúma EC": "Criciuma",
-    "EC Vitória": "Vitoria",
-    "Grêmio FBPA": "Gremio",
-    "SC Internacional": "Internacional",
-    "Santos FC": "Santos",
-    "América FC": "America Mineiro",
-    "Ceará SC": "Ceara",
-    "Sport Club do Recife": "Sport Recife",
-    "Avaí FC": "Avai",
-    "Goiás EC": "Goias",
-    "Coritiba FC": "Coritiba",
-    "Guarani FC": "Guarani Campinas",
-    "Associação Chapecoense de Futebol": "Chapecoense-sc",
-    "AA Ponte Preta": "Ponte Preta",
-    "Vila Nova FC": "Vila Nova",
-    "Londrina EC": "Londrina",
-    "Sampaio Corrêa FC": "Sampaio Correa",
-    "Clube Náutico Capibaribe": "Nautico Recife",
-    "Ituano FC": "Ituano",
-    "Grêmio Novorizontino": "Novorizontino",
-    "Operário Ferroviário EC": "Operario-PR",
-    "Brusque FC": "Brusque",
-    "Tombense FC": "Tombense",
-    "CSA": "CSA",
-    "CRB": "CRB",
+    # --- BRASIL ---
+    "Cruzeiro EC": "Cruzeiro", "São Paulo FC": "Sao Paulo", "SC Corinthians Paulista": "Corinthians",
+    "SE Palmeiras": "Palmeiras", "CR Flamengo": "Flamengo", "Fluminense FC": "Fluminense",
+    "Botafogo FR": "Botafogo", "CR Vasco da Gama": "Vasco DA Gama", "Clube Atlético Mineiro": "Atletico-MG",
+    "EC Bahia": "Bahia", "Fortaleza EC": "Fortaleza EC", "Cuiabá EC": "Cuiaba",
+    "AC Goianiense": "Atletico Goianiense", "EC Juventude": "Juventude", "CA Paranaense": "Atletico Paranaense",
+    "Red Bull Bragantino": "RB Bragantino", "Criciúma EC": "Criciuma", "EC Vitória": "Vitoria",
+    "Grêmio FBPA": "Gremio", "SC Internacional": "Internacional", "Santos FC": "Santos",
+    "América FC": "America Mineiro", "Ceará SC": "Ceara", "Sport Club do Recife": "Sport Recife",
+    "Avaí FC": "Avai", "Goiás EC": "Goias", "Coritiba FC": "Coritiba", "Guarani FC": "Guarani Campinas",
+    "Associação Chapecoense de Futebol": "Chapecoense-sc", "AA Ponte Preta": "Ponte Preta",
+    "Vila Nova FC": "Vila Nova", "Londrina EC": "Londrina", "Sampaio Corrêa FC": "Sampaio Correa",
+    "Clube Náutico Capibaribe": "Nautico Recife", "Ituano FC": "Ituano", "Grêmio Novorizontino": "Novorizontino",
+    "Operário Ferroviário EC": "Operario-PR", "Brusque FC": "Brusque", "Tombense FC": "Tombense",
+    "CSA": "CSA", "CRB": "CRB", "Mirassol FC": "Mirassol", "ABC FC": "ABC",
     
-    # --- SÉRIE C & D (Alguns mapeamentos extras comuns) ---
-    "ABC FC": "ABC",
-    "Figueirense FC": "Figueirense",
-    "Paysandu SC": "Paysandu",
-    "EC São José": "Sao Jose",
-    "Botafogo FC": "Botafogo PB", # Ou SP, depende do contexto, mas PB é comum
-    "Botafogo FC SP": "Botafogo SP",
-    "Manaus FC": "Manaus FC",
-    "Mirassol FC": "Mirassol",
-    "Volta Redonda FC": "Volta Redonda",
-    "Ypiranga FC": "Ypiranga-RS",
-    "Paraná Clube": "Parana",
-    "Santa Cruz FC": "Santa Cruz",
-    "Amazonas FC": "Amazonas",
+    # --- ESPANHA ---
+    "FC Barcelona": "Barcelona", "Real Madrid CF": "Real Madrid", "Club Atlético de Madrid": "Atletico Madrid",
+    "Sevilla FC": "Sevilla", "Real Betis Balompié": "Real Betis", "Real Sociedad de Fútbol": "Real Sociedad",
+    "Villarreal CF": "Villarreal", "Valencia CF": "Valencia", "Athletic Club": "Athletic Club",
+    "Getafe CF": "Getafe", "Girona FC": "Girona", "Rayo Vallecano de Madrid": "Rayo Vallecano",
+    "RCD Mallorca": "Mallorca", "RC Celta de Vigo": "Celta Vigo", "CA Osasuna": "Osasuna",
+    "Deportivo Alavés": "Alaves", "Cádiz CF": "Cadiz", "UD Almería": "Almeria", "Granada CF": "Granada CF",
+    "UD Las Palmas": "Las Palmas", "RCD Espanyol de Barcelona": "Espanyol", "Real Valladolid CF": "Valladolid",
+    "Elche CF": "Elche", "Levante UD": "Levante", "SD Eibar": "Eibar", "CD Leganés": "Leganes",
+    "Real Sporting de Gijón": "Sporting Gijon", "Real Oviedo": "Oviedo", "Real Zaragoza": "Zaragoza",
+    "CD Tenerife": "Tenerife", "Albacete Balompié": "Albacete",
     
-    # --- EUROPA (Mantidos para garantir) ---
+    # --- ALEMANHA (Bundesliga) ---
+    "FC Bayern München": "Bayern München", "Borussia Dortmund": "Borussia Dortmund", 
+    "Bayer 04 Leverkusen": "Bayer Leverkusen", "RB Leipzig": "RB Leipzig", 
+    "1. FC Union Berlin": "Union Berlin", "SC Freiburg": "SC Freiburg", 
+    "Eintracht Frankfurt": "Eintracht Frankfurt", "VfL Wolfsburg": "VfL Wolfsburg",
+    "1. FSV Mainz 05": "FSV Mainz 05", "Borussia Mönchengladbach": "Borussia Mönchengladbach",
+    "1. FC Köln": "1. FC Köln", "TSG 1899 Hoffenheim": "1899 Hoffenheim",
+    "SV Werder Bremen": "Werder Bremen", "VfL Bochum 1848": "VfL Bochum",
+    "FC Augsburg": "FC Augsburg", "VfB Stuttgart": "VfB Stuttgart",
+    "1. FC Heidenheim 1846": "1. FC Heidenheim", "SV Darmstadt 98": "SV Darmstadt 98",
+    "Fortuna Düsseldorf": "Fortuna Düsseldorf", "FC Schalke 04": "FC Schalke 04",
+    "Hamburger SV": "Hamburger SV", "Hertha BSC": "Hertha BSC", "Hannover 96": "Hannover 96",
+    "1. FC Nürnberg": "1. FC Nürnberg", "FC St. Pauli 1910": "FC St. Pauli",
+    "Holstein Kiel": "Holstein Kiel", "SC Paderborn 07": "SC Paderborn 07",
+    "Karlsruher SC": "Karlsruher SC", "1. FC Kaiserslautern": "1. FC Kaiserslautern",
+    "1. FC Magdeburg": "1. FC Magdeburg", "SpVgg Greuther Fürth": "SpVgg Greuther Fürth",
+    "FC Hansa Rostock": "Hansa Rostock", "VfL Osnabrück": "VfL Osnabrück", 
+    "SV Wehen Wiesbaden": "SV Wehen", "SV Elversberg": "SV Elversberg",
+
+    # --- INGLATERRA ---
     "Manchester United FC": "Manchester United", "Newcastle United FC": "Newcastle",
     "West Ham United FC": "West Ham", "Wolverhampton Wanderers FC": "Wolves",
     "Brighton & Hove Albion FC": "Brighton", "Tottenham Hotspur FC": "Tottenham",
-    "Bayer 04 Leverkusen": "Bayer Leverkusen", "FC Bayern München": "Bayern Munich"
+    "Nottingham Forest FC": "Nottingham Forest", "Leicester City FC": "Leicester",
+    "Ipswich Town FC": "Ipswich"
 }
 
 # --- 3. VERIFICAÇÃO DE CHAVES ---
@@ -126,7 +116,6 @@ def load_db(_sheet):
 # --- 5. FUNÇÕES DE API ---
 @st.cache_data(ttl=300)
 def get_jogos_fd(liga_code, date_str):
-    """Busca jogos na API Antiga (Football-Data)"""
     url = f"https://api.football-data.org/v4/competitions/{liga_code}/matches"
     headers = {"X-Auth-Token": KEY_JOGOS}
     params = {"dateFrom": date_str, "dateTo": date_str, "status": "SCHEDULED"}
@@ -137,7 +126,6 @@ def get_jogos_fd(liga_code, date_str):
 
 @st.cache_data(ttl=300)
 def get_odds_e_nomes_af(date_obj):
-    """Busca na API Nova (Hoje e Amanhã)"""
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': KEY_ODDS}
     dates_to_fetch = [date_obj.strftime('%Y-%m-%d'), (date_obj + timedelta(days=1)).strftime('%Y-%m-%d')]
     
@@ -146,21 +134,16 @@ def get_odds_e_nomes_af(date_obj):
 
     for d in dates_to_fetch:
         try:
-            # 1. Fixtures (Nomes)
             r_fix = requests.get("https://v3.football.api-sports.io/fixtures", headers=headers, params={"date": d})
             all_fixtures.extend(r_fix.json().get('response', []))
-            
-            # 2. Odds (Sem filtro de bookmaker)
             r_odds = requests.get("https://v3.football.api-sports.io/odds", headers=headers, params={"date": d})
             all_odds.extend(r_odds.json().get('response', []))
         except: continue
 
     if not all_fixtures: return {}
 
-    # Mapeia ID -> Nome
     id_to_name = {f['fixture']['id']: f['teams']['home']['name'] for f in all_fixtures}
 
-    # Processa Odds
     final_map = {}
     for o in all_odds:
         fid = o['fixture']['id']
@@ -193,17 +176,17 @@ def fundir_dados(jogos_fd, mapa_odds_af):
         # 1. Tenta Dicionário Manual (Prioridade Total)
         nome_busca = DE_PARA_TIMES.get(tc, tc)
         
-        # 2. Tenta Fuzzy Match se não achou direto
+        # 2. Tenta Fuzzy Match
+        match = difflib.get_close_matches(nome_busca, nomes_af, n=1, cutoff=0.4)
+        
         odds, stt, info = {}, "📝", "Sem Match"
         
-        if nome_busca in mapa_odds_af:
+        if match:
+            odds = mapa_odds_af[match[0]]
+            stt, info = "💰", f"Match: {match[0]}"
+        elif nome_busca in mapa_odds_af:
              odds = mapa_odds_af[nome_busca]
              stt, info = "💰", f"Match Manual: {nome_busca}"
-        else:
-            match = difflib.get_close_matches(nome_busca, nomes_af, n=1, cutoff=0.4)
-            if match:
-                odds = mapa_odds_af[match[0]]
-                stt, info = "💰", f"Match Auto: {match[0]}"
         
         logs.append(f"{tc} -> {nome_busca} -> {info}")
         finais.append({'hora': hora, 'casa': tc, 'fora': tf, 'odds': odds, 'status': stt})
@@ -298,7 +281,7 @@ def calc_kelly(prob, odd, fracao, banca):
 # --- 7. INTERFACE ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô Híbrido v12.9")
+    st.title("🤖 Robô Híbrido v13.1")
     LIGA_NOME = st.selectbox("Liga:", LIGAS_FD.keys())
     LIGA_CODE = LIGAS_FD[LIGA_NOME]
     dt_sel = st.date_input("Data:", datetime.now(FUSO).date())
@@ -343,17 +326,17 @@ with t_jogos:
             p, x = predict(MODE, dc_data, df_hist, avg_hist, m['casa'], m['fora'])
             if p and m['odds']:
                 o = m['odds']
-                check = [('Home', '1x2', 'Home', 'vitoria_casa'), ('Away', '1x2', 'Away', 'vitoria_visitante'), ('Over 2.5', 'goals', 'Over 2.5', 'over_2_5'), ('BTTS', 'btts', 'Yes', 'btts_sim')]
-                for lbl, cat, sel, pk in check:
+                check_mkts = [('Home', '1x2', 'Home', 'vitoria_casa'), ('Away', '1x2', 'Away', 'vitoria_visitante'), ('Over 2.5', 'goals', 'Over 2.5', 'over_2_5'), ('BTTS', 'btts', 'Yes', 'btts_sim')]
+                for lbl, cat, sel, prob_key in check_mkts:
                     if cat in o and sel in o[cat]:
-                        odr = o[cat][sel]
-                        prb = p[pk]
-                        ev = (prb * odr) - 1
-                        if prb > MIN_PROB and ev > 0.05:
-                            radar.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': lbl, 'Odd': odr, 'Prob': prb, 'EV': ev*100})
+                        odd_real = o[cat][sel]
+                        prob_robo = p[prob_key]
+                        ev = (prob_robo * odd_real) - 1
+                        if prob_robo > MIN_PROB and ev > 0.05:
+                            radar.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': lbl, 'Odd': odd_real, 'Prob': prob_robo, 'EV': ev*100})
         
         if radar:
-            with st.expander(f"🔥 RADAR ({len(radar)})", expanded=True):
+            with st.expander(f"🔥 RADAR DE VALOR ({len(radar)})", expanded=True):
                 st.dataframe(pd.DataFrame(radar).sort_values('EV', ascending=False), hide_index=True, use_container_width=True, column_config={"Prob": st.column_config.ProgressColumn("Conf", format="%.0f%%"), "EV": st.column_config.NumberColumn("Valor", format="%.1f%%")})
 
         # LISTA
