@@ -1,17 +1,17 @@
-# app.py - Robô de Valor (v12.3 - Correção: Volta dos Mercados + Debug de Odds)
+# app.py - Robô de Valor (v12.4 - Híbrido Corrigido: Typo Fix + Season Fix)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import time, json, pytz, gspread, difflib
 from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- CONFIGURAÇÕES ---
+# --- 1. CONFIGURAÇÕES INICIAIS ---
 FUSO = pytz.timezone('America/Manaus')
-st.set_page_config(page_title="Robô v12.3", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Robô Híbrido v12.4", page_icon="🤖", layout="wide")
 
 st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}a[href]{text-decoration:none;color:white;}</style>""", unsafe_allow_html=True)
 
-# --- VERIFICAÇÃO DE CHAVES ---
+# --- 2. VERIFICAÇÃO DE CHAVES (BLINDADA) ---
 try:
     KEY_JOGOS = st.secrets["FOOTBALL_DATA_TOKEN"]
     KEY_ODDS = st.secrets["API_FOOTBALL_KEY"]
@@ -20,7 +20,7 @@ except:
         KEY_JOGOS = st.secrets["google_creds"]["FOOTBALL_DATA_TOKEN"]
         KEY_ODDS = st.secrets["google_creds"]["API_FOOTBALL_KEY"]
     except:
-        st.error("🚨 ERRO: Chaves de API não encontradas!")
+        st.error("🚨 ERRO: Chaves de API não encontradas nos Secrets!")
         st.stop()
 
 LIGAS_FD = {
@@ -29,7 +29,7 @@ LIGAS_FD = {
     "Eredivisie": "DED", "Championship": "ELC", "Primeira Liga": "PPL", "Euro": "EC"
 }
 
-# --- BANCO DE DADOS ---
+# --- 3. FUNÇÕES DE BANCO DE DADOS ---
 @st.cache_resource
 def connect_db():
     try:
@@ -55,29 +55,28 @@ def load_db(_sheet):
         return df, df['Status'].value_counts().get('Green ✅', 0), df['Status'].value_counts().get('Red ❌', 0)
     except: return pd.DataFrame(), 0, 0
 
-# --- APIS ---
+# --- 4. FUNÇÕES DE API ---
 @st.cache_data(ttl=300)
 def get_jogos_fd(liga_code, date_str):
     url = f"https://api.football-data.org/v4/competitions/{liga_code}/matches"
     headers = {"X-Auth-Token": KEY_JOGOS}
+    params = {"dateFrom": date_str, "dateTo": date_str, "status": "SCHEDULED"}
     try:
-        r = requests.get(url, headers=headers, params={"dateFrom": date_str, "dateTo": date_str, "status": "SCHEDULED"})
+        r = requests.get(url, headers=headers, params=params)
         return r.json().get('matches', [])
     except: return []
 
 @st.cache_data(ttl=300)
 def get_odds_e_nomes_af(date_str):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': KEY_ODDS}
-    # 1. Fixtures (Nomes)
     try:
+        # Fixtures (Nomes) - Busca TODOS do dia
         r_fix = requests.get("https://v3.football.api-sports.io/fixtures", headers=headers, params={"date": date_str})
         fixtures = r_fix.json().get('response', [])
         if not fixtures: return {}
         id_to_name = {f['fixture']['id']: f['teams']['home']['name'] for f in fixtures}
-    except: return {}
 
-    # 2. Odds (Sem filtro de bookmaker para pegar qualquer um)
-    try:
+        # Odds - Busca TODOS do dia
         r_odds = requests.get("https://v3.football.api-sports.io/odds", headers=headers, params={"date": date_str})
         odds_resp = r_odds.json().get('response', [])
         
@@ -86,9 +85,8 @@ def get_odds_e_nomes_af(date_str):
             fid = o['fixture']['id']
             nome_casa = id_to_name.get(fid)
             if nome_casa and o['bookmakers']:
-                # Pega a primeira casa disponível
-                bookie = o['bookmakers'][0]
-                # Se tiver Bet365 (8), prefere ela
+                bookie = o['bookmakers'][0] 
+                # Prefere Bet365 (8)
                 for b in o['bookmakers']:
                     if b['id'] == 8: bookie = b; break
                 
@@ -107,12 +105,12 @@ def fundir_dados(jogos_fd, mapa_odds_af):
     for j in jogos_fd:
         tc = j['homeTeam']['name']
         tf = j['awayTeam']['name']
-        hora = datetime.strptime(j['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc).astimezone(FUSO).strftime('%H:%M')
+        utc = datetime.strptime(j['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+        hora = utc.astimezone(FUSO).strftime('%H:%M')
         
-        # Match
-        match = difflib.get_close_matches(tc, nomes_af, n=1, cutoff=0.3) # Baixei cutoff para 0.3 (mais tolerante)
+        # Match Nomes
+        match = difflib.get_close_matches(tc, nomes_af, n=1, cutoff=0.3)
         odds, stt, info = {}, "📝", "Sem Match"
-        
         if match:
             odds = mapa_odds_af[match[0]]
             stt, info = "💰", f"Match: {match[0]}"
@@ -121,7 +119,7 @@ def fundir_dados(jogos_fd, mapa_odds_af):
         finais.append({'hora': hora, 'casa': tc, 'fora': tf, 'odds': odds, 'status': stt})
     return finais, logs, nomes_af
 
-# --- CÉREBRO ---
+# --- 5. LÓGICA DO ROBÔ ---
 @st.cache_data
 def load_dc(liga_nome):
     try:
@@ -191,6 +189,16 @@ def predict(mode, dc, df_poi, avg_poi, home, away):
         return probs, xg
     except: return None, None
 
+# --- AQUI ESTAVA O ERRO: NOME CORRIGIDO ---
+def get_form_str(team, df):
+    if df is None or df.empty: return ""
+    m = df[(df['TimeCasa']==team)|(df['TimeVisitante']==team)].sort_values('data_jogo').tail(5)
+    r = ""
+    for _, g in m.iterrows():
+        if g['TimeCasa']==team: r += "✅" if g['GolsCasa']>g['GolsVisitante'] else ("➖" if g['GolsCasa']==g['GolsVisitante'] else "❌")
+        else: r += "✅" if g['GolsVisitante']>g['GolsCasa'] else ("➖" if g['GolsVisitante']==g['GolsCasa'] else "❌")
+    return f"({r})"
+
 def calc_kelly(prob, odd, fracao, banca):
     if odd<=1 or prob<=0: return 0,0
     b = odd-1; q=1-prob
@@ -198,10 +206,10 @@ def calc_kelly(prob, odd, fracao, banca):
     stk = (f*fracao*banca) if f>0 else 0
     return stk, f*fracao*100
 
-# --- INTERFACE ---
+# --- 6. INTERFACE GRAFICA ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô Híbrido v12.3")
+    st.title("🤖 Robô Híbrido v12.4")
     LIGA_NOME = st.selectbox("Liga:", LIGAS_FD.keys())
     LIGA_CODE = LIGAS_FD[LIGA_NOME]
     dt_sel = st.date_input("Data:", datetime.now(FUSO).date())
@@ -228,21 +236,15 @@ with t_jogos:
             matches, logs, todos_nomes_af = fundir_dados(jogos_fd, mapa_odds)
         else: matches = []
 
-    # --- DEBUG DE ODDS (EXPANDER AZUL) ---
-    if not matches and jogos_fd:
-        st.error("Erro: Jogos encontrados na API 1 mas falha na fusão.")
+    if not matches and jogos_fd: st.error("Erro: Jogos encontrados na API 1 mas falha na fusão.")
     
     if matches:
-        # Verifica se alguma odd foi encontrada
-        total_odds_found = sum(1 for m in matches if m['status'] == "💰")
-        if total_odds_found == 0:
+        tot_odds = sum(1 for m in matches if m['status'] == "💰")
+        if tot_odds == 0:
             with st.expander("🛠️ Diagnóstico: Por que as Odds estão vazias?", expanded=True):
-                st.warning("O Robô não conseguiu casar os nomes da API Antiga com a Nova.")
-                st.write("**Nomes disponíveis na API de Odds (Nova):**")
+                st.warning("O Robô não conseguiu casar os nomes.")
                 st.write(todos_nomes_af)
-                st.write("**Tentativas de Casamento:**")
                 for l in logs: st.caption(l)
-    # -------------------------------------
 
     if not matches:
         st.info("Nenhum jogo encontrado na Football-Data.")
@@ -270,9 +272,10 @@ with t_jogos:
         if 'sel_game' not in st.session_state:
             for i, m in enumerate(matches):
                 p, xg = predict(MODE, dc_data, df_hist, avg_hist, m['casa'], m['fora'])
-                f_c = get_form(m['casa'], df_hist)
-                f_f = get_form(m['fora'], df_hist)
-                
+                # --- CORREÇÃO AQUI (NOME DA FUNÇÃO ATUALIZADO) ---
+                f_c = get_form_str(m['casa'], df_hist)
+                f_f = get_form_str(m['fora'], df_hist)
+                # -------------------------------------------------
                 c1, c2 = st.columns([3, 1])
                 status = m['status'] 
                 if c1.button(f"{status} {m['hora']} | {m['casa']} {f_c} x {f_f} {m['fora']}", key=f"b{i}", use_container_width=True):
@@ -288,14 +291,12 @@ with t_jogos:
             
             with st.form("auto"):
                 col_o = st.columns(2)
-                # Tenta pegar odds
                 o = g['odds']
                 od_h = o.get('1x2', {}).get('Home', 1.0)
                 od_d = o.get('1x2', {}).get('Draw', 1.0)
                 od_a = o.get('1x2', {}).get('Away', 1.0)
                 od_ov = o.get('goals', {}).get('Over 2.5', 1.0)
                 od_bt = o.get('btts', {}).get('Yes', 1.0)
-                # Chance Dupla
                 od_1x = o.get('dc', {}).get('Home/Draw', 1.0)
                 od_x2 = o.get('dc', {}).get('Draw/Away', 1.0)
                 od_12 = o.get('dc', {}).get('Home/Away', 1.0)
@@ -324,15 +325,11 @@ with t_jogos:
                             l = f"{prob:.1%}" + (f" (R${stk:.0f})" if stk>0 else "")
                             cols[idx].metric(lbl, l, f"{ev*100:.1f}% EV", delta_color=cor)
                             if stk>0 and db: salvar_db(db, g['hora'], LIGA_NOME, f"{g['casa']}x{g['fora']}", lbl, odd, prob*100, ev*100, stk)
-                        
                         if uh>1: show("Casa", p['vitoria_casa'], uh, 0)
                         if ua>1: show("Fora", p['vitoria_visitante'], ua, 1)
                         if uo>1: show("Over", p['over_2_5'], uo, 2)
-                        
-                        # Mostra Secundários apenas na metrica se tiver odd
                         if ub>1: show("BTTS", p['btts_sim'], ub, 0)
                         if u1x>1: show("1X", p['chance_dupla_1X'], u1x, 1)
-                        
                         if db: st.success("Salvo!")
 
 with t_hist:
