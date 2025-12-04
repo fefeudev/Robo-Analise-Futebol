@@ -1,17 +1,17 @@
-# app.py - Robô de Valor (v12.2 - Híbrido Estável: Jogos FD + Odds AF)
+# app.py - Robô de Valor (v12.3 - Correção: Volta dos Mercados + Debug de Odds)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import time, json, pytz, gspread, difflib
 from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- 1. CONFIGURAÇÕES INICIAIS ---
+# --- CONFIGURAÇÕES ---
 FUSO = pytz.timezone('America/Manaus')
-st.set_page_config(page_title="Robô Híbrido v12.2", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Robô v12.3", page_icon="🤖", layout="wide")
 
 st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}a[href]{text-decoration:none;color:white;}</style>""", unsafe_allow_html=True)
 
-# --- 2. VERIFICAÇÃO DE CHAVES ---
+# --- VERIFICAÇÃO DE CHAVES ---
 try:
     KEY_JOGOS = st.secrets["FOOTBALL_DATA_TOKEN"]
     KEY_ODDS = st.secrets["API_FOOTBALL_KEY"]
@@ -20,7 +20,7 @@ except:
         KEY_JOGOS = st.secrets["google_creds"]["FOOTBALL_DATA_TOKEN"]
         KEY_ODDS = st.secrets["google_creds"]["API_FOOTBALL_KEY"]
     except:
-        st.error("🚨 ERRO: Chaves de API não encontradas nos Secrets!")
+        st.error("🚨 ERRO: Chaves de API não encontradas!")
         st.stop()
 
 LIGAS_FD = {
@@ -29,7 +29,7 @@ LIGAS_FD = {
     "Eredivisie": "DED", "Championship": "ELC", "Primeira Liga": "PPL", "Euro": "EC"
 }
 
-# --- 3. FUNÇÕES DE BANCO DE DADOS (AGORA NO TOPO) ---
+# --- BANCO DE DADOS ---
 @st.cache_resource
 def connect_db():
     try:
@@ -55,28 +55,29 @@ def load_db(_sheet):
         return df, df['Status'].value_counts().get('Green ✅', 0), df['Status'].value_counts().get('Red ❌', 0)
     except: return pd.DataFrame(), 0, 0
 
-# --- 4. FUNÇÕES DE API ---
+# --- APIS ---
 @st.cache_data(ttl=300)
 def get_jogos_fd(liga_code, date_str):
     url = f"https://api.football-data.org/v4/competitions/{liga_code}/matches"
     headers = {"X-Auth-Token": KEY_JOGOS}
-    params = {"dateFrom": date_str, "dateTo": date_str, "status": "SCHEDULED"}
     try:
-        r = requests.get(url, headers=headers, params=params)
+        r = requests.get(url, headers=headers, params={"dateFrom": date_str, "dateTo": date_str, "status": "SCHEDULED"})
         return r.json().get('matches', [])
     except: return []
 
 @st.cache_data(ttl=300)
 def get_odds_e_nomes_af(date_str):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': KEY_ODDS}
+    # 1. Fixtures (Nomes)
     try:
-        # Fixtures (Nomes)
         r_fix = requests.get("https://v3.football.api-sports.io/fixtures", headers=headers, params={"date": date_str})
         fixtures = r_fix.json().get('response', [])
         if not fixtures: return {}
         id_to_name = {f['fixture']['id']: f['teams']['home']['name'] for f in fixtures}
+    except: return {}
 
-        # Odds
+    # 2. Odds (Sem filtro de bookmaker para pegar qualquer um)
+    try:
         r_odds = requests.get("https://v3.football.api-sports.io/odds", headers=headers, params={"date": date_str})
         odds_resp = r_odds.json().get('response', [])
         
@@ -85,37 +86,42 @@ def get_odds_e_nomes_af(date_str):
             fid = o['fixture']['id']
             nome_casa = id_to_name.get(fid)
             if nome_casa and o['bookmakers']:
-                bookie = o['bookmakers'][0] # Pega 10Bet/Bwin/Bet365
-                markets = {}
+                # Pega a primeira casa disponível
+                bookie = o['bookmakers'][0]
+                # Se tiver Bet365 (8), prefere ela
+                for b in o['bookmakers']:
+                    if b['id'] == 8: bookie = b; break
+                
+                mkts = {}
                 for m in bookie['bets']:
-                    if m['id'] == 1: markets['1x2'] = {Op['value']: float(Op['odd']) for Op in m['values']}
-                    elif m['id'] == 5: markets['goals'] = {Op['value']: float(Op['odd']) for Op in m['values']}
-                    elif m['id'] == 8: markets['btts'] = {Op['value']: float(Op['odd']) for Op in m['values']}
-                final_map[nome_casa] = markets
+                    if m['id'] == 1: mkts['1x2'] = {v['value']: float(v['odd']) for v in m['values']}
+                    elif m['id'] == 12: mkts['dc'] = {v['value']: float(v['odd']) for v in m['values']}
+                    elif m['id'] == 5: mkts['goals'] = {v['value']: float(v['odd']) for v in m['values']}
+                    elif m['id'] == 8: mkts['btts'] = {v['value']: float(v['odd']) for v in m['values']}
+                final_map[nome_casa] = mkts
         return final_map
     except: return {}
 
 def fundir_dados(jogos_fd, mapa_odds_af):
-    jogos_finais = []
-    nomes_af = list(mapa_odds_af.keys())
-    
-    for jogo in jogos_fd:
-        tc = jogo['homeTeam']['name']
-        tf = jogo['awayTeam']['name']
-        utc = datetime.strptime(jogo['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
-        hora = utc.astimezone(FUSO).strftime('%H:%M')
+    finais, nomes_af, logs = [], list(mapa_odds_af.keys()), []
+    for j in jogos_fd:
+        tc = j['homeTeam']['name']
+        tf = j['awayTeam']['name']
+        hora = datetime.strptime(j['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc).astimezone(FUSO).strftime('%H:%M')
         
-        # Match Nome
-        match = difflib.get_close_matches(tc, nomes_af, n=1, cutoff=0.4)
-        odds, status = {}, "⚠️"
+        # Match
+        match = difflib.get_close_matches(tc, nomes_af, n=1, cutoff=0.3) # Baixei cutoff para 0.3 (mais tolerante)
+        odds, stt, info = {}, "📝", "Sem Match"
+        
         if match:
             odds = mapa_odds_af[match[0]]
-            status = "💰"
-            
-        jogos_finais.append({'hora': hora, 'casa': tc, 'fora': tf, 'odds': odds, 'status': status})
-    return jogos_finais
+            stt, info = "💰", f"Match: {match[0]}"
+        
+        logs.append(f"{tc} -> {info}")
+        finais.append({'hora': hora, 'casa': tc, 'fora': tf, 'odds': odds, 'status': stt})
+    return finais, logs, nomes_af
 
-# --- 5. LÓGICA DO ROBÔ ---
+# --- CÉREBRO ---
 @st.cache_data
 def load_dc(liga_nome):
     try:
@@ -130,14 +136,14 @@ def get_historico_fd(liga_code, season):
     try:
         r = requests.get(url, headers=headers, params={"season": season, "status": "FINISHED"})
         data = r.json().get('matches', [])
-        lista = [{'data_jogo': m['utcDate'][:10], 'TimeCasa': m['homeTeam']['name'], 'TimeVisitante': m['awayTeam']['name'], 'GolsCasa': int(m['score']['fullTime']['home']), 'GolsVisitante': int(m['score']['fullTime']['away'])} for m in data if m['score']['fullTime']['home'] is not None]
-        df = pd.DataFrame(lista)
+        lst = [{'data_jogo': m['utcDate'][:10], 'TimeCasa': m['homeTeam']['name'], 'TimeVisitante': m['awayTeam']['name'], 'GolsCasa': int(m['score']['fullTime']['home']), 'GolsVisitante': int(m['score']['fullTime']['away'])} for m in data if m['score']['fullTime']['home'] is not None]
+        df = pd.DataFrame(lst)
         if not df.empty: df['data_jogo'] = pd.to_datetime(df['data_jogo'])
         return df, {'media_gols_casa': df['GolsCasa'].mean(), 'media_gols_visitante': df['GolsVisitante'].mean()} if not df.empty else None
     except: return None, None
 
 def calc_probs(l_casa, m_visit, rho=0.0):
-    probs = np.zeros((7, 7)); max_prob, placar = 0, (0,0); p01, p23, p4p = 0,0,0
+    probs = np.zeros((7, 7)); max_prob, placar = 0, (0,0)
     for i in range(7):
         for j in range(7):
             tau = 1.0
@@ -148,18 +154,22 @@ def calc_probs(l_casa, m_visit, rho=0.0):
             p = stats.poisson.pmf(i, l_casa) * stats.poisson.pmf(j, m_visit) * tau
             probs[i, j] = p
             if p > max_prob: max_prob, placar = p, (i, j)
-            if (i+j)<=1: p01+=p
-            elif (i+j)<=3: p23+=p
-            else: p4p+=p
-    total = np.sum(probs)
-    if total==0: return None
+    
+    tot = np.sum(probs)
+    if tot==0: return None
     home, draw, away = np.sum(np.tril(probs,-1)), np.sum(np.diag(probs)), np.sum(np.triu(probs,1))
     over, btts = 0, 0
     for i in range(7):
         for j in range(7):
             if (i+j)>2.5: over+=probs[i,j]
             if i>0 and j>0: btts+=probs[i,j]
-    return {'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total, 'over_2_5': over/total, 'btts_sim': btts/total, 'placar': placar, 'f_01': p01/total, 'f_23': p23/total}
+    
+    return {
+        'vitoria_casa': home/tot, 'empate': draw/tot, 'vitoria_visitante': away/tot,
+        'over_2_5': over/tot, 'btts_sim': btts/tot,
+        'chance_dupla_1X': (home+draw)/tot, 'chance_dupla_X2': (draw+away)/tot, 'chance_dupla_12': (home+away)/tot,
+        'placar': placar
+    }
 
 def predict(mode, dc, df_poi, avg_poi, home, away):
     xg = (0,0)
@@ -185,15 +195,6 @@ def predict(mode, dc, df_poi, avg_poi, home, away):
         return probs, xg
     except: return None, None
 
-def get_form(team, df):
-    if df is None or df.empty: return ""
-    m = df[(df['TimeCasa']==team)|(df['TimeVisitante']==team)].sort_values('data_jogo').tail(5)
-    r = ""
-    for _, g in m.iterrows():
-        if g['TimeCasa']==team: r += "✅" if g['GolsCasa']>g['GolsVisitante'] else ("➖" if g['GolsCasa']==g['GolsVisitante'] else "❌")
-        else: r += "✅" if g['GolsVisitante']>g['GolsCasa'] else ("➖" if g['GolsVisitante']==g['GolsCasa'] else "❌")
-    return f"({r})"
-
 def calc_kelly(prob, odd, fracao, banca):
     if odd<=1 or prob<=0: return 0,0
     b = odd-1; q=1-prob
@@ -201,10 +202,10 @@ def calc_kelly(prob, odd, fracao, banca):
     stk = (f*fracao*banca) if f>0 else 0
     return stk, f*fracao*100
 
-# --- 6. INTERFACE GRAFICA ---
+# --- INTERFACE ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô Híbrido v12.2")
+    st.title("🤖 Robô v12.3")
     LIGA_NOME = st.selectbox("Liga:", LIGAS_FD.keys())
     LIGA_CODE = LIGAS_FD[LIGA_NOME]
     dt_sel = st.date_input("Data:", datetime.now(FUSO).date())
@@ -225,13 +226,30 @@ with t_jogos:
     with st.spinner("🔄 Cruzando bases de dados..."):
         jogos_fd = get_jogos_fd(LIGA_CODE, dt_sel.strftime('%Y-%m-%d'))
         mapa_odds = {}
+        todos_nomes_af = []
         if jogos_fd:
             mapa_odds = get_odds_e_nomes_af(dt_sel.strftime('%Y-%m-%d'))
-            matches = fundir_dados(jogos_fd, mapa_odds)
+            matches, logs, todos_nomes_af = fundir_dados(jogos_fd, mapa_odds)
         else: matches = []
 
+    # --- DEBUG DE ODDS (EXPANDER AZUL) ---
+    if not matches and jogos_fd:
+        st.error("Erro: Jogos encontrados na API 1 mas falha na fusão.")
+    
+    if matches:
+        # Verifica se alguma odd foi encontrada
+        total_odds_found = sum(1 for m in matches if m['status'] == "💰")
+        if total_odds_found == 0:
+            with st.expander("🛠️ Diagnóstico: Por que as Odds estão vazias?", expanded=True):
+                st.warning("O Robô não conseguiu casar os nomes da API Antiga com a Nova.")
+                st.write("**Nomes disponíveis na API de Odds (Nova):**")
+                st.write(todos_nomes_af)
+                st.write("**Tentativas de Casamento:**")
+                for l in logs: st.caption(l)
+    # -------------------------------------
+
     if not matches:
-        st.info("Nenhum jogo encontrado.")
+        st.info("Nenhum jogo encontrado na Football-Data.")
     else:
         # RADAR
         radar = []
@@ -258,7 +276,6 @@ with t_jogos:
                 p, xg = predict(MODE, dc_data, df_hist, avg_hist, m['casa'], m['fora'])
                 f_c = get_form(m['casa'], df_hist)
                 f_f = get_form(m['fora'], df_hist)
-                
                 c1, c2 = st.columns([3, 1])
                 status = m['status'] 
                 if c1.button(f"{status} {m['hora']} | {m['casa']} {f_c} x {f_f} {m['fora']}", key=f"b{i}", use_container_width=True):
@@ -267,42 +284,4 @@ with t_jogos:
                 c2.metric("xG", f"{xg[0]:.2f}-{xg[1]:.2f}" if xg else "-")
         else:
             g = st.session_state.sel_game
-            if st.button("⬅️ Voltar"): del st.session_state.sel_game; st.rerun()
-            st.markdown(f"### {g['casa']} vs {g['fora']}")
-            
-            p, xg = predict(MODE, dc_data, df_hist, avg_hist, g['casa'], g['fora'])
-            
-            with st.form("auto"):
-                col_o = st.columns(4)
-                o = g['odds']
-                od_h = o.get('1x2', {}).get('Home', 1.0)
-                od_d = o.get('1x2', {}).get('Draw', 1.0)
-                od_a = o.get('1x2', {}).get('Away', 1.0)
-                od_ov = o.get('goals', {}).get('Over 2.5', 1.0)
-                
-                uh = col_o[0].number_input("Casa", value=float(od_h))
-                ud = col_o[1].number_input("Empate", value=float(od_d))
-                ua = col_o[2].number_input("Fora", value=float(od_a))
-                uo = col_o[3].number_input("Over 2.5", value=float(od_ov))
-                
-                if st.form_submit_button("Analisar"):
-                    if p:
-                        st.info(f"🔮 Placar: **{p['placar'][0]}x{p['placar'][1]}**")
-                        cols = st.columns(3)
-                        def show(lbl, prob, odd, idx):
-                            ev = (prob*odd)-1
-                            cor = "normal" if (ev>0.05 and prob>MIN_PROB) else "inverse"
-                            stk, _ = calc_kelly(prob, odd, KELLY, BANCA)
-                            l = f"{prob:.1%}" + (f" (R${stk:.0f})" if stk>0 else "")
-                            cols[idx].metric(lbl, l, f"{ev*100:.1f}% EV", delta_color=cor)
-                            if stk>0 and db: salvar_db(db, g['hora'], LIGA_NOME, f"{g['casa']}x{g['fora']}", lbl, odd, prob*100, ev*100, stk)
-                        if uh>1: show("Casa", p['vitoria_casa'], uh, 0)
-                        if ua>1: show("Fora", p['vitoria_visitante'], ua, 1)
-                        if uo>1: show("Over", p['over_2_5'], uo, 2)
-                        if db: st.success("Salvo!")
-
-with t_hist:
-    if db:
-        df_h, g, r = load_db(db)
-        c1,c2 = st.columns(2); c1.metric("Greens", g); c2.metric("Reds", r)
-        st.dataframe(df_h, use_container_width=True)
+            if st.button("⬅️ Voltar"): del st.session_state
