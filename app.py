@@ -24,8 +24,8 @@ DE_PARA_TIMES = {
     "Grêmio FBPA": "Gremio", "SC Internacional": "Internacional", "Santos FC": "Santos", 
     "Mirassol FC": "Mirassol", "Sport Club do Recife": "Sport Recife", "Ceará SC": "Ceara", "América FC": "America-MG",
     # Europa
-    "Manchester United FC": "Manchester United", "Newcastle United FC": "Newcastle",
-    "West Ham United FC": "West Ham", "Wolverhampton Wanderers FC": "Wolves",
+    "Manchester United FC": "Manchester United", "Newcastle United FC": "Newcastle", "Real Betis Balompié": "Real Betis",
+    "West Ham United FC": "West Ham", "Wolverhampton Wanderers FC": "Wolves", "FC Barcelona": "Barcelona",
     "Brighton & Hove Albion FC": "Brighton", "Tottenham Hotspur FC": "Tottenham",
     "Bayer 04 Leverkusen": "Bayer Leverkusen", "FC Bayern München": "Bayern Munich"
 }
