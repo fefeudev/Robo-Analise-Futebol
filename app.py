@@ -284,4 +284,62 @@ with t_jogos:
                 c2.metric("xG", f"{xg[0]:.2f}-{xg[1]:.2f}" if xg else "-")
         else:
             g = st.session_state.sel_game
-            if st.button("⬅️ Voltar"): del st.session_state
+            if st.button("⬅️ Voltar"): del st.session_state.sel_game; st.rerun()
+            st.markdown(f"### {g['casa']} vs {g['fora']}")
+            
+            p, xg = predict(MODE, dc_data, df_hist, avg_hist, g['casa'], g['fora'])
+            
+            with st.form("auto"):
+                col_o = st.columns(2)
+                # Tenta pegar odds
+                o = g['odds']
+                od_h = o.get('1x2', {}).get('Home', 1.0)
+                od_d = o.get('1x2', {}).get('Draw', 1.0)
+                od_a = o.get('1x2', {}).get('Away', 1.0)
+                od_ov = o.get('goals', {}).get('Over 2.5', 1.0)
+                od_bt = o.get('btts', {}).get('Yes', 1.0)
+                # Chance Dupla
+                od_1x = o.get('dc', {}).get('Home/Draw', 1.0)
+                od_x2 = o.get('dc', {}).get('Draw/Away', 1.0)
+                od_12 = o.get('dc', {}).get('Home/Away', 1.0)
+                
+                with col_o[0]:
+                    st.markdown("**Principal**")
+                    uh = st.number_input("Casa", value=float(od_h))
+                    ud = st.number_input("Empate", value=float(od_d))
+                    ua = st.number_input("Fora", value=float(od_a))
+                    uo = st.number_input("Over 2.5", value=float(od_ov))
+                with col_o[1]:
+                    st.markdown("**Secundários**")
+                    ub = st.number_input("BTTS Sim", value=float(od_bt))
+                    u1x = st.number_input("1X", value=float(od_1x))
+                    ux2 = st.number_input("X2", value=float(od_x2))
+                    u12 = st.number_input("12", value=float(od_12))
+                
+                if st.form_submit_button("Analisar"):
+                    if p:
+                        st.info(f"🔮 Placar: **{p['placar'][0]}x{p['placar'][1]}**")
+                        cols = st.columns(3)
+                        def show(lbl, prob, odd, idx):
+                            ev = (prob*odd)-1
+                            cor = "normal" if (ev>0.05 and prob>MIN_PROB) else "inverse"
+                            stk, _ = calc_kelly(prob, odd, KELLY, BANCA)
+                            l = f"{prob:.1%}" + (f" (R${stk:.0f})" if stk>0 else "")
+                            cols[idx].metric(lbl, l, f"{ev*100:.1f}% EV", delta_color=cor)
+                            if stk>0 and db: salvar_db(db, g['hora'], LIGA_NOME, f"{g['casa']}x{g['fora']}", lbl, odd, prob*100, ev*100, stk)
+                        
+                        if uh>1: show("Casa", p['vitoria_casa'], uh, 0)
+                        if ua>1: show("Fora", p['vitoria_visitante'], ua, 1)
+                        if uo>1: show("Over", p['over_2_5'], uo, 2)
+                        
+                        # Mostra Secundários apenas na metrica se tiver odd
+                        if ub>1: show("BTTS", p['btts_sim'], ub, 0)
+                        if u1x>1: show("1X", p['chance_dupla_1X'], u1x, 1)
+                        
+                        if db: st.success("Salvo!")
+
+with t_hist:
+    if db:
+        df_h, g, r = load_db(db)
+        c1,c2 = st.columns(2); c1.metric("Greens", g); c2.metric("Reds", r)
+        st.dataframe(df_h, use_container_width=True)
