@@ -1,4 +1,4 @@
-# app.py - Robô v12.6 (Correção Definitiva de Fuso Horário + Dicionário)
+# app.py - Robô v12.7 (Correção NameError + Fuso + Dicionário)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import time, json, pytz, gspread, difflib
@@ -7,27 +7,44 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 FUSO = pytz.timezone('America/Manaus')
-st.set_page_config(page_title="Robô Híbrido v12.6", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Robô Híbrido v12.7", page_icon="🤖", layout="wide")
 
 st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}a[href]{text-decoration:none;color:white;}</style>""", unsafe_allow_html=True)
 
-# --- 2. DICIONÁRIO MANUAL (DE-PARA) ---
-# Garante que o robô ache o time mesmo se o nome for diferente
+# --- 2. DICIONÁRIO MANUAL (ATUALIZE COM O RESULTADO DO MAPEADOR) ---
 DE_PARA_TIMES = {
-    # Brasil
-    "Cruzeiro EC": "Cruzeiro", "São Paulo FC": "Sao Paulo", "SC Corinthians Paulista": "Corinthians",
-    "SE Palmeiras": "Palmeiras", "CR Flamengo": "Flamengo", "Fluminense FC": "Fluminense",
-    "Botafogo FR": "Botafogo", "CR Vasco da Gama": "Vasco DA Gama", "Clube Atlético Mineiro": "Atletico-MG",
-    "EC Bahia": "Bahia", "Fortaleza EC": "Fortaleza", "Cuiabá EC": "Cuiaba",
-    "AC Goianiense": "Atletico Goianiense", "EC Juventude": "Juventude", "CA Paranaense": "Athletico Paranaense",
-    "Red Bull Bragantino": "Red Bull Bragantino", "Criciúma EC": "Criciuma", "EC Vitória": "Vitoria",
-    "Grêmio FBPA": "Gremio", "SC Internacional": "Internacional", "Santos FC": "Santos", 
-    "Mirassol FC": "Mirassol", "Sport Club do Recife": "Sport Recife", "Ceará SC": "Ceara", "América FC": "America-MG",
-    # Europa
-    "Manchester United FC": "Manchester United", "Newcastle United FC": "Newcastle", "Real Betis Balompié": "Real Betis",
-    "West Ham United FC": "West Ham", "Wolverhampton Wanderers FC": "Wolves", "FC Barcelona": "Barcelona",
-    "Brighton & Hove Albion FC": "Brighton", "Tottenham Hotspur FC": "Tottenham",
-    "Bayer 04 Leverkusen": "Bayer Leverkusen", "FC Bayern München": "Bayern Munich"
+    # Brasileirão
+    "Cruzeiro EC": "Cruzeiro", 
+    "São Paulo FC": "Sao Paulo", 
+    "SC Corinthians Paulista": "Corinthians",
+    "SE Palmeiras": "Palmeiras", 
+    "CR Flamengo": "Flamengo", 
+    "Fluminense FC": "Fluminense",
+    "Botafogo FR": "Botafogo", 
+    "CR Vasco da Gama": "Vasco DA Gama", 
+    "Clube Atlético Mineiro": "Atletico-MG",
+    "EC Bahia": "Bahia", 
+    "Fortaleza EC": "Fortaleza", 
+    "Cuiabá EC": "Cuiaba",
+    "AC Goianiense": "Atletico Goianiense", 
+    "EC Juventude": "Juventude", 
+    "CA Paranaense": "Athletico Paranaense",
+    "Red Bull Bragantino": "Red Bull Bragantino", 
+    "Criciúma EC": "Criciuma", 
+    "EC Vitória": "Vitoria",
+    "Grêmio FBPA": "Gremio", 
+    "SC Internacional": "Internacional",
+    
+    # Premier League
+    "Manchester United FC": "Manchester United", 
+    "Newcastle United FC": "Newcastle",
+    "West Ham United FC": "West Ham", 
+    "Wolverhampton Wanderers FC": "Wolves",
+    "Brighton & Hove Albion FC": "Brighton", 
+    "Tottenham Hotspur FC": "Tottenham",
+    "Nottingham Forest FC": "Nottingham Forest",
+    "Leicester City FC": "Leicester",
+    "Ipswich Town FC": "Ipswich"
 }
 
 # --- 3. VERIFICAÇÃO DE CHAVES ---
@@ -89,29 +106,25 @@ def get_jogos_fd(liga_code, date_str):
 @st.cache_data(ttl=300)
 def get_odds_e_nomes_af(date_obj):
     """
-    CORREÇÃO V12.6: Busca HOJE e AMANHÃ.
-    Isso resolve o problema de jogos à noite no Brasil que viram 'amanhã' na Europa.
+    Busca na API Nova (API-Football).
+    TRUQUE: Busca o dia selecionado E o dia seguinte para evitar erro de fuso horário.
     """
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': KEY_ODDS}
     
-    # Lista de datas para buscar (Hoje + Amanhã)
     dates_to_fetch = [date_obj.strftime('%Y-%m-%d'), (date_obj + timedelta(days=1)).strftime('%Y-%m-%d')]
     
     all_fixtures = []
     all_odds = []
 
-    # Faz o loop buscando nas duas datas
     for d in dates_to_fetch:
         try:
-            # 1. Fixtures
+            # 1. Fixtures (Nomes)
             r_fix = requests.get("https://v3.football.api-sports.io/fixtures", headers=headers, params={"date": d})
-            data_fix = r_fix.json().get('response', [])
-            all_fixtures.extend(data_fix)
+            all_fixtures.extend(r_fix.json().get('response', []))
             
-            # 2. Odds (Sem filtro de bookmaker para garantir retorno)
+            # 2. Odds
             r_odds = requests.get("https://v3.football.api-sports.io/odds", headers=headers, params={"date": d})
-            data_odds = r_odds.json().get('response', [])
-            all_odds.extend(data_odds)
+            all_odds.extend(r_odds.json().get('response', []))
         except: continue
 
     if not all_fixtures: return {}
@@ -119,7 +132,7 @@ def get_odds_e_nomes_af(date_obj):
     # Mapeia ID -> Nome
     id_to_name = {f['fixture']['id']: f['teams']['home']['name'] for f in all_fixtures}
 
-    # Processa Odds e Unifica
+    # Processa Odds
     final_map = {}
     for o in all_odds:
         fid = o['fixture']['id']
@@ -127,7 +140,7 @@ def get_odds_e_nomes_af(date_obj):
         
         if nome_casa and o['bookmakers']:
             bookie = o['bookmakers'][0] 
-            # Tenta Bet365 (8) se disponível
+            # Tenta Bet365 (8)
             for b in o['bookmakers']:
                 if b['id'] == 8: bookie = b; break
             
@@ -258,7 +271,7 @@ def calc_kelly(prob, odd, fracao, banca):
 # --- 7. INTERFACE ---
 db = connect_db()
 with st.sidebar:
-    st.title("🤖 Robô Híbrido v12.6")
+    st.title("🤖 Robô Híbrido v12.7")
     LIGA_NOME = st.selectbox("Liga:", LIGAS_FD.keys())
     LIGA_CODE = LIGAS_FD[LIGA_NOME]
     dt_sel = st.date_input("Data:", datetime.now(FUSO).date())
@@ -276,17 +289,12 @@ t_jogos, t_hist = st.tabs(["Jogos & Radar", "Histórico"])
 with t_jogos:
     st.subheader(f"{LIGA_NOME} ({MODE}) - {dt_sel.strftime('%d/%m')}")
     
-    with st.spinner("🔄 Cruzando bases de dados (Hoje + Amanhã)..."):
-        # 1. Busca Jogos na API ANTIGA (Só dia selecionado)
+    with st.spinner("🔄 Cruzando bases de dados..."):
         jogos_fd = get_jogos_fd(LIGA_CODE, dt_sel.strftime('%Y-%m-%d'))
-        
         mapa_odds = {}
         todos_nomes_af = []
-        
-        # 2. Busca Odds na API NOVA (Hoje + Amanhã para pegar fuso)
-        # Passa o objeto DATA (dt_sel), a função trata de buscar o dia seguinte
         if jogos_fd:
-            mapa_odds = get_odds_e_nomes_af(dt_sel)
+            mapa_odds = get_odds_e_nomes_af(dt_sel) # Passa objeto data
             matches, logs, todos_nomes_af = fundir_dados(jogos_fd, mapa_odds)
         else: matches = []
 
@@ -295,8 +303,8 @@ with t_jogos:
     # DEBUG
     if matches and sum(1 for m in matches if m['status']=="💰")==0:
         with st.expander("🛠️ Diagnóstico de Nomes", expanded=True):
-            st.warning("O Robô não casou os nomes.")
-            st.write("Nomes disponíveis na API NOVA (Carregados de 2 dias):", todos_nomes_af)
+            st.warning("O Robô não casou os nomes. Adicione no DE_PARA_TIMES.")
+            st.write("Nomes disponíveis na API NOVA:", todos_nomes_af)
             for l in logs: st.caption(l)
 
     if not matches:
@@ -315,7 +323,7 @@ with t_jogos:
                         prob_robo = p[prob_key]
                         ev = (prob_robo * odd_real) - 1
                         if prob_robo > MIN_PROB and ev > 0.05:
-                            radar.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': lbl, 'Odd Real': odd_real, 'Prob': prob_robo, 'EV': ev*100})
+                            radar.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': lbl, 'Odd': odd_real, 'Prob': prob_robo, 'EV': ev*100})
         
         if radar:
             with st.expander(f"🔥 RADAR DE VALOR ({len(radar)})", expanded=True):
@@ -325,8 +333,8 @@ with t_jogos:
         if 'sel_game' not in st.session_state:
             for i, m in enumerate(matches):
                 p, xg = predict(MODE, dc_data, df_hist, avg_hist, m['casa'], m['fora'])
-                f_c = get_form_str(m['casa'], df_hist) # Corrigido
-                f_f = get_form_str(m['fora'], df_hist) # Corrigido
+                f_c = get_form_str(m['casa'], df_hist)
+                f_f = get_form_str(m['fora'], df_hist)
                 c1, c2 = st.columns([3, 1])
                 if c1.button(f"{m['status']} {m['hora']} | {m['casa']} {f_c} x {f_f} {m['fora']}", key=f"b{i}", use_container_width=True):
                     st.session_state.sel_game = m
