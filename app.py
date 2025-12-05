@@ -11,7 +11,7 @@ st.set_page_config(page_title="Robô v16.1 (Fix)", page_icon="🤖", layout="wid
 
 st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}a[href]{text-decoration:none;color:white;}</style>""", unsafe_allow_html=True)
 
-# --- 2. FUNÇÕES CRITICAS (COM CORREÇÃO DE HEADER) ---
+# --- 2. FUNÇÕES CRITICAS (COM CORREÇÃO DE HEADER E ORDEM) ---
 
 @st.cache_resource
 def connect_db():
@@ -103,26 +103,38 @@ def load_dc(sigla):
     except: return None
 
 def match_name_dc(name, dc_names):
-    # Dicionário de Fallback Interno
-    manual_map = {
-        "Sao Paulo": "São Paulo FC", "Corinthians": "SC Corinthians Paulista",
-        "Flamengo": "CR Flamengo", "Palmeiras": "SE Palmeiras", "Atletico-MG": "Clube Atlético Mineiro",
-        "Botafogo": "Botafogo FR", "Fluminense": "Fluminense FC", "Vasco DA Gama": "CR Vasco da Gama",
-        "Internacional": "SC Internacional", "Gremio": "Grêmio FBPA", "Bahia": "EC Bahia",
-        "Vitoria": "EC Vitória", "Fortaleza": "Fortaleza EC", "Ceara": "Ceará SC",
-        "Sport Recife": "Sport Club do Recife", "Cruzeiro": "Cruzeiro EC", "Goias": "Goiás EC",
-        "Manchester United": "Manchester United FC", "Man City": "Manchester City FC",
-        "Liverpool": "Liverpool FC", "Arsenal": "Arsenal FC", "Chelsea": "Chelsea FC",
-        "Real Madrid": "Real Madrid CF", "Barcelona": "FC Barcelona"
+    # Dicionário de Fallback Interno (Importante para o match manual)
+    DE_PARA_TIMES = {
+        "Cruzeiro EC": "Cruzeiro", "São Paulo FC": "Sao Paulo", "SC Corinthians Paulista": "Corinthians",
+        "SE Palmeiras": "Palmeiras", "CR Flamengo": "Flamengo", "Fluminense FC": "Fluminense",
+        "Botafogo FR": "Botafogo", "CR Vasco da Gama": "Vasco DA Gama", "Clube Atlético Mineiro": "Atletico-MG",
+        "EC Bahia": "Bahia", "Fortaleza EC": "Fortaleza", "Cuiabá EC": "Cuiaba",
+        "AC Goianiense": "Atletico Goianiense", "EC Juventude": "Juventude", "CA Paranaense": "Athletico Paranaense",
+        "Red Bull Bragantino": "RB Bragantino", "Criciúma EC": "Criciuma", "EC Vitória": "Vitoria",
+        "Grêmio FBPA": "Gremio", "SC Internacional": "Internacional", "Santos FC": "Santos",
+        "América FC": "America Mineiro", "Ceará SC": "Ceara", "Sport Club do Recife": "Sport Recife",
+        "Avaí FC": "Avai", "Goiás EC": "Goias", "Coritiba FC": "Coritiba",
+        "Manchester United FC": "Manchester United", "Newcastle United FC": "Newcastle",
+        "West Ham United FC": "West Ham", "Wolverhampton Wanderers FC": "Wolves",
+        "Brighton & Hove Albion FC": "Brighton", "Tottenham Hotspur FC": "Tottenham",
+        "FC Barcelona": "Barcelona", "Real Madrid CF": "Real Madrid", "Club Atlético de Madrid": "Atletico Madrid",
+        "FC Bayern München": "Bayern München", "Borussia Dortmund": "Borussia Dortmund", 
+        "Bayer 04 Leverkusen": "Bayer Leverkusen", "1. FC Union Berlin": "Union Berlin"
     }
     
-    # 1. Tenta mapa manual
-    if name in manual_map and manual_map[name] in dc_names:
-        return manual_map[name]
-
-    # 2. Tenta match exato
+    # Inverte o dicionário para buscar pelo nome da API Nova (key) e achar o nome do JSON (value)
+    # O DC usa o nome "Antigo" (JSON)
+    
+    # 1. Tenta match exato
     if name in dc_names: return name
     
+    # 2. Tenta pelo dicionário (Value -> Key)
+    # A API Nova manda "Cruzeiro". O JSON tem "Cruzeiro EC".
+    # O Dicionário tem "Cruzeiro EC": "Cruzeiro"
+    for nome_json, nome_api in DE_PARA_TIMES.items():
+        if nome_api == name and nome_json in dc_names:
+            return nome_json
+
     # 3. Tenta fuzzy
     match = difflib.get_close_matches(name, dc_names, n=1, cutoff=0.4)
     return match[0] if match else name
@@ -170,6 +182,11 @@ def calc_kelly(prob, odd, fracao, banca):
     f = (b*prob-q)/b
     stk = (f*fracao*banca) if f>0 else 0
     return stk, f*fracao*100
+
+def get_form(team_name, df_hist):
+    # Função dummy para evitar NameError se o histórico não for carregado
+    # A v16 foca em Odds, então forma é secundária
+    return ""
 
 # --- 3. EXECUÇÃO ---
 
