@@ -1,4 +1,4 @@
-# app.py - Robô v14.0 (Match por ID - Estratégia Definitiva)
+# app.py - Robô v14.2 (Estratégia Sniper: Odds -> IDs -> Detalhes)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import time, json, pytz, gspread
@@ -7,19 +7,25 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 1. CONFIGURAÇÕES ---
 FUSO = pytz.timezone('America/Manaus')
-st.set_page_config(page_title="Robô v14.0 (ID Match)", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Robô v14.2 (Sniper)", page_icon="🎯", layout="wide")
 
 st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}a[href]{text-decoration:none;color:white;}</style>""", unsafe_allow_html=True)
 
 # --- 2. CHAVES E LIGAS ---
 try:
-    # Tenta pegar a chave
-    API_KEY = st.secrets.get("API_FOOTBALL_KEY") or st.secrets["google_creds"]["API_FOOTBALL_KEY"]
+    # Tenta pegar a chave (Prioridade para Secrets)
+    if "API_FOOTBALL_KEY" in st.secrets:
+        API_KEY = st.secrets["API_FOOTBALL_KEY"]
+    elif "google_creds" in st.secrets and "API_FOOTBALL_KEY" in st.secrets["google_creds"]:
+        API_KEY = st.secrets["google_creds"]["API_FOOTBALL_KEY"]
+    else:
+        st.error("🚨 Chave API_FOOTBALL_KEY não encontrada nos Secrets!")
+        st.stop()
 except:
-    st.error("🚨 Configure 'API_FOOTBALL_KEY' nos Secrets!")
+    st.error("🚨 Erro ao ler Secrets.")
     st.stop()
 
-# Mapeamento: Nome da Liga -> (ID da Liga na API-Football, Sigla do JSON)
+# ID das Ligas na API-Football
 LIGAS_MAP = {
     "Brasileirão": (71, "BSA"),
     "Champions League": (2, "CL"),
@@ -34,39 +40,45 @@ LIGAS_MAP = {
     "Euro": (4, "EC")
 }
 
-# --- 3. FUNÇÕES DE API INTELIGENTES ---
+# --- 3. FUNÇÕES SNIPER (ODDS PRIMEIRO) ---
+
 @st.cache_data(ttl=300)
-def get_dados_do_dia(date_str):
+def get_jogos_via_odds(liga_id, date_str):
     """
-    A MÁGICA: Baixa TODOS os jogos e TODAS as odds do dia em 2 chamadas.
-    Depois cruza tudo usando o ID do jogo (Fixture ID).
+    ESTRATÉGIA SNIPER:
+    1. Baixa as Odds do dia (Geral).
+    2. Filtra os IDs da liga desejada.
+    3. Busca os detalhes (nomes) apenas desses IDs.
     """
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     
-    # 1. Baixar TODOS os jogos do dia (Sem filtro de liga para não bugar season)
+    # PASSO 1: Buscar TODAS as odds do dia (Isso funciona no Free)
+    # bookmaker=8 é Bet365. Se não tiver, removemos o filtro.
     try:
-        r_fix = requests.get("https://v3.football.api-sports.io/fixtures", headers=headers, params={"date": date_str})
-        fixtures_raw = r_fix.json().get('response', [])
-    except: fixtures_raw = []
+        url_odds = "https://v3.football.api-sports.io/odds"
+        r = requests.get(url_odds, headers=headers, params={"date": date_str, "bookmaker": "8"})
+        data_odds = r.json().get('response', [])
+        
+        if not data_odds: # Fallback sem bookmaker
+             r = requests.get(url_odds, headers=headers, params={"date": date_str})
+             data_odds = r.json().get('response', [])
+    except Exception as e:
+        return [], f"Erro na busca de Odds: {str(e)}"
 
-    if not fixtures_raw: return {}, []
+    if not data_odds:
+        return [], "A API de Odds retornou vazio para esta data (pode não ter jogos liberados ainda)."
 
-    # 2. Baixar TODAS as odds do dia
-    try:
-        r_odds = requests.get("https://v3.football.api-sports.io/odds", headers=headers, params={"date": date_str})
-        odds_raw = r_odds.json().get('response', [])
-    except: odds_raw = []
-
-    # 3. Criar Mapa de Odds por ID {12345: {odds...}}
+    # PASSO 2: Filtrar IDs da Liga Selecionada
+    ids_da_liga = []
     odds_map = {}
-    for o in odds_raw:
-        fid = o['fixture']['id']
-        if o['bookmakers']:
-            bookie = o['bookmakers'][0]
-            # Tenta achar Bet365 (8)
-            for b in o['bookmakers']:
-                if b['id'] == 8: bookie = b; break
+    
+    for o in data_odds:
+        if o['league']['id'] == liga_id:
+            fid = o['fixture']['id']
+            ids_da_liga.append(str(fid))
             
+            # Guarda as odds
+            bookie = o['bookmakers'][0]
             mkts = {}
             for m in bookie['bets']:
                 if m['id'] == 1: mkts['1x2'] = {v['value']: float(v['odd']) for v in m['values']}
@@ -74,48 +86,54 @@ def get_dados_do_dia(date_str):
                 elif m['id'] == 5: mkts['goals'] = {v['value']: float(v['odd']) for v in m['values']}
                 elif m['id'] == 8: mkts['btts'] = {v['value']: float(v['odd']) for v in m['values']}
             odds_map[fid] = mkts
+            
+    if not ids_da_liga:
+        return [], f"Odds encontradas para o dia, mas NENHUMA para a liga ID {liga_id}."
 
-    return odds_map, fixtures_raw
-
-def processar_jogos_da_liga(liga_id, fixtures_raw, odds_map):
-    """Filtra os jogos da liga escolhida e cola as odds pelo ID"""
+    # PASSO 3: Buscar detalhes dos jogos pelos IDs (Batch Request)
+    # A API permite até 20 IDs por vez. Vamos quebrar em pedaços.
     jogos_finais = []
     
-    for f in fixtures_raw:
-        # Filtra só a liga que queremos
-        if f['league']['id'] != liga_id:
-            continue
+    # Quebra em chunks de 20
+    chunk_size = 20
+    for i in range(0, len(ids_da_liga), chunk_size):
+        chunk = ids_da_liga[i:i + chunk_size]
+        ids_str = "-".join(chunk)
+        
+        try:
+            url_fix = "https://v3.football.api-sports.io/fixtures"
+            r_fix = requests.get(url_fix, headers=headers, params={"ids": ids_str})
+            data_fix = r_fix.json().get('response', [])
             
-        fid = f['fixture']['id']
-        
-        # Tenta pegar as odds pelo ID (Match Perfeito!)
-        odds = odds_map.get(fid, {})
-        status = "💰" if odds else "⚠️"
-        
-        jogos_finais.append({
-            'id': fid,
-            'hora': datetime.fromtimestamp(f['fixture']['timestamp'], FUSO).strftime('%H:%M'),
-            'casa': f['teams']['home']['name'],
-            'fora': f['teams']['away']['name'],
-            'odds': odds,
-            'status': status,
-            'status_jogo': f['fixture']['status']['short'],
-            'score_casa': f['goals']['home'],
-            'score_fora': f['goals']['away']
-        })
-        
-    return jogos_finais
+            for f in data_fix:
+                fid = f['fixture']['id']
+                # Monta o objeto final
+                jogos_finais.append({
+                    'id': fid,
+                    'hora': datetime.fromtimestamp(f['fixture']['timestamp'], FUSO).strftime('%H:%M'),
+                    'casa': f['teams']['home']['name'],
+                    'fora': f['teams']['away']['name'],
+                    'odds': odds_map.get(fid, {}), # Já cola a odd aqui
+                    'status_jogo': f['fixture']['status']['short'],
+                    'score_casa': f['goals']['home'],
+                    'score_fora': f['goals']['away']
+                })
+        except: continue
 
-# --- 4. CÉREBRO ---
+    return jogos_finais, "Sucesso"
+
+# --- 4. CÉREBRO MATEMÁTICO ---
 @st.cache_data
 def load_dc(sigla_liga):
     try:
         with open(f"dc_params_{sigla_liga}.json", 'r', encoding='utf-8') as f: return json.load(f)
     except: return None
 
-# Tradutor simplificado para o Cérebro DC (já que agora temos o nome oficial da API)
 def match_name_dc(name, dc_names):
-    match = difflib.get_close_matches(name, dc_names, n=1, cutoff=0.4)
+    # Tenta match exato
+    if name in dc_names: return name
+    # Tenta fuzzy
+    match = difflib.get_close_matches(name, dc_names, n=1, cutoff=0.5)
     return match[0] if match else name
 
 def calc_probs(l_casa, m_visit, rho=0.0):
@@ -147,7 +165,7 @@ def predict(dc, home, away):
     if not dc: return None, (0,0)
     try:
         f = dc['forcas']
-        # Traduz nomes da API Nova para nomes do JSON (Dixon Coles)
+        # Tenta achar o nome do time no JSON
         h_dc = match_name_dc(home, list(f.keys()))
         a_dc = match_name_dc(away, list(f.keys()))
         
@@ -183,7 +201,7 @@ db = connect_db()
 
 # SIDEBAR
 with st.sidebar:
-    st.title("🤖 Robô v14.0 (ID Match)")
+    st.title("🤖 Robô v14.2 (Sniper)")
     LIGA_NOME = st.selectbox("Liga:", LIGAS_MAP.keys())
     ID_LIGA, SIGLA_LIGA = LIGAS_MAP[LIGA_NOME]
     
@@ -199,35 +217,41 @@ dc_data = load_dc(SIGLA_LIGA)
 # LAYOUT
 st.subheader(f"{LIGA_NOME} - {dt_sel.strftime('%d/%m')}")
 
-# BUSCA DUPLA (Segurança de Fuso Horário)
-dates_to_check = [dt_sel.strftime('%Y-%m-%d'), (dt_sel + timedelta(days=1)).strftime('%Y-%m-%d')]
-final_matches = []
+# LÓGICA DE BUSCA
+jogos_encontrados = []
+msg_status = ""
 
-with st.spinner("Baixando Jogos e Odds (Por ID)..."):
-    # Busca Hoje e Amanhã e junta tudo
-    for d in dates_to_check:
-        omap, fraw = get_dados_do_dia(d)
-        if fraw:
-            res = processar_jogos_da_liga(ID_LIGA, fraw, omap)
-            final_matches.extend(res)
+with st.spinner("Aplicando Estratégia Sniper (Odds -> Jogos)..."):
+    # Tenta hoje e amanhã para garantir fuso
+    datas = [dt_sel.strftime('%Y-%m-%d'), (dt_sel + timedelta(days=1)).strftime('%Y-%m-%d')]
+    
+    for d in datas:
+        res, msg = get_jogos_via_odds(ID_LIGA, d)
+        if res:
+            jogos_encontrados.extend(res)
+        else:
+            msg_status = msg # Guarda a última mensagem de erro/status
 
-# Remove duplicatas (caso o jogo apareça nas duas buscas)
+# Remove duplicatas
 seen = set()
 unique_matches = []
-for m in final_matches:
+for m in jogos_encontrados:
     if m['id'] not in seen:
         unique_matches.append(m)
         seen.add(m['id'])
 
 if not unique_matches:
-    st.info("Nenhum jogo encontrado para esta liga nestas datas.")
+    st.warning(f"Nenhum jogo encontrado com Odds para {LIGA_NOME}.")
+    with st.expander("Ver detalhes técnicos"):
+        st.write(f"Status da API: {msg_status}")
 else:
-    # RADAR DE OPORTUNIDADES
+    # RADAR
     radar = []
     for m in unique_matches:
         p, x = predict(dc_data, m['casa'], m['fora'])
         if p and m['odds']:
             o = m['odds']
+            # Mapeamento de labels da API
             check = [('Home', '1x2', 'Home', 'vitoria_casa'), ('Away', '1x2', 'Away', 'vitoria_visitante'), ('Over 2.5', 'goals', 'Over 2.5', 'over_2_5'), ('BTTS', 'btts', 'Yes', 'btts_sim')]
             for lbl, cat, sel, pk in check:
                 if cat in o and sel in o[cat]:
@@ -241,12 +265,12 @@ else:
         with st.expander(f"🔥 RADAR ({len(radar)})", expanded=True):
             st.dataframe(pd.DataFrame(radar).sort_values('EV', ascending=False), hide_index=True, use_container_width=True, column_config={"Prob": st.column_config.ProgressColumn("Conf", format="%.0f%%"), "EV": st.column_config.NumberColumn("Valor", format="%.1f%%")})
 
-    # LISTA DE JOGOS
+    # LISTA
     if 'sel_game' not in st.session_state:
         for i, m in enumerate(unique_matches):
             p, xg = predict(dc_data, m['casa'], m['fora'])
             c1, c2 = st.columns([3, 1])
-            if c1.button(f"{m['status']} {m['hora']} | {m['casa']} x {m['fora']}", key=f"b{i}", use_container_width=True):
+            if c1.button(f"💰 {m['hora']} | {m['casa']} x {m['fora']}", key=f"b{i}", use_container_width=True):
                 st.session_state.sel_game = m
                 st.rerun()
             c2.metric("xG", f"{xg[0]:.2f}-{xg[1]:.2f}" if xg else "-")
@@ -260,6 +284,7 @@ else:
         with st.form("auto"):
             col_o = st.columns(2)
             o = g['odds']
+            # Busca segura
             od_h = o.get('1x2', {}).get('Home', 1.0)
             od_d = o.get('1x2', {}).get('Draw', 1.0)
             od_a = o.get('1x2', {}).get('Away', 1.0)
