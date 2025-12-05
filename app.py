@@ -1,17 +1,17 @@
-# app.py - Robô v16.0 (A Solução Definitiva: Ordem Correta + Fluxo Reverso)
+# app.py - Robô v16.1 (Correção de Autenticação API-Sports + Fluxo Reverso)
 import streamlit as st
 import requests, pandas as pd, numpy as np, scipy.stats as stats
 import time, json, pytz, gspread, difflib
 from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- 1. CONFIGURAÇÕES INICIAIS ---
+# --- 1. CONFIGURAÇÕES ---
 FUSO = pytz.timezone('America/Manaus')
-st.set_page_config(page_title="Robô v16.0", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="Robô v16.1 (Fix)", page_icon="🤖", layout="wide")
 
 st.markdown("""<style>.stApp{background-color:#0A0A1A}[data-testid="stSidebar"]{background-color:#0F1116;border-right:1px solid #2a2a3a}h1,h2{color:#FAFAFA}h3{color:#4A90E2}[data-testid="stMetric"]{background-color:#1F202B;border:1px solid #333344;border-radius:10px}[data-testid="stButton"]>button{background-color:#4A90E2;color:#FFF;border:none}[data-testid="stExpander"]>summary{background-color:#1F202B;border:1px solid #333344}a[href]{text-decoration:none;color:white;}</style>""", unsafe_allow_html=True)
 
-# --- 2. DEFINIÇÃO DE TODAS AS FUNÇÕES (AQUI NO TOPO PARA NÃO DAR ERRO) ---
+# --- 2. FUNÇÕES CRITICAS (COM CORREÇÃO DE HEADER) ---
 
 @st.cache_resource
 def connect_db():
@@ -38,15 +38,24 @@ def load_db(_sheet):
         return df, df['Status'].value_counts().get('Green ✅', 0), df['Status'].value_counts().get('Red ❌', 0)
     except: return pd.DataFrame(), 0, 0
 
+# --- CORREÇÃO AQUI: Header correto para Dashboard ---
+def get_headers(api_key):
+    return {
+        'x-apisports-key': api_key,  # Chave correta para Dashboard
+        'x-rapidapi-key': api_key,   # Fallback para RapidAPI
+        'x-rapidapi-host': "v3.football.api-sports.io"
+    }
+
 @st.cache_data(ttl=300)
 def buscar_todas_odds_range(api_key, date_obj):
-    # Busca odds de Hoje e Amanhã para garantir fuso horário
-    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': api_key}
+    """Busca odds de Hoje e Amanhã usando o Header correto"""
     url = "https://v3.football.api-sports.io/odds"
+    headers = get_headers(api_key)
     
-    # Buscamos hoje e amanhã
     dates = [date_obj.strftime('%Y-%m-%d'), (date_obj + timedelta(days=1)).strftime('%Y-%m-%d')]
     todas_odds = []
+    
+    debug_info = []
     
     for d in dates:
         try:
@@ -54,26 +63,29 @@ def buscar_todas_odds_range(api_key, date_obj):
             r = requests.get(url, headers=headers, params={"date": d, "bookmaker": "8"})
             data = r.json().get('response', [])
             
-            # Se não vier nada, tenta SEM filtro de bookmaker (Pega qualquer casa)
+            # Se vazio, tenta genérico
             if not data:
                 r = requests.get(url, headers=headers, params={"date": d})
                 data = r.json().get('response', [])
-            
+                
             if data:
                 todas_odds.extend(data)
-        except: continue
+                debug_info.append(f"Data {d}: {len(data)} odds encontradas.")
+            else:
+                debug_info.append(f"Data {d}: 0 odds (Erro API: {r.json().get('errors')})")
+        except Exception as e:
+            debug_info.append(f"Data {d}: Erro conexão ({str(e)})")
+            continue
         
-    return todas_odds
+    return todas_odds, debug_info
 
 @st.cache_data(ttl=300)
 def buscar_detalhes_jogos(api_key, lista_ids):
     if not lista_ids: return []
-    
-    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': api_key}
     url = "https://v3.football.api-sports.io/fixtures"
-    jogos = []
+    headers = get_headers(api_key)
     
-    # Paginação de 20 em 20 (limite da URL)
+    jogos = []
     chunk_size = 20
     for i in range(0, len(lista_ids), chunk_size):
         chunk = lista_ids[i:i + chunk_size]
@@ -91,7 +103,27 @@ def load_dc(sigla):
     except: return None
 
 def match_name_dc(name, dc_names):
+    # Dicionário de Fallback Interno
+    manual_map = {
+        "Sao Paulo": "São Paulo FC", "Corinthians": "SC Corinthians Paulista",
+        "Flamengo": "CR Flamengo", "Palmeiras": "SE Palmeiras", "Atletico-MG": "Clube Atlético Mineiro",
+        "Botafogo": "Botafogo FR", "Fluminense": "Fluminense FC", "Vasco DA Gama": "CR Vasco da Gama",
+        "Internacional": "SC Internacional", "Gremio": "Grêmio FBPA", "Bahia": "EC Bahia",
+        "Vitoria": "EC Vitória", "Fortaleza": "Fortaleza EC", "Ceara": "Ceará SC",
+        "Sport Recife": "Sport Club do Recife", "Cruzeiro": "Cruzeiro EC", "Goias": "Goiás EC",
+        "Manchester United": "Manchester United FC", "Man City": "Manchester City FC",
+        "Liverpool": "Liverpool FC", "Arsenal": "Arsenal FC", "Chelsea": "Chelsea FC",
+        "Real Madrid": "Real Madrid CF", "Barcelona": "FC Barcelona"
+    }
+    
+    # 1. Tenta mapa manual
+    if name in manual_map and manual_map[name] in dc_names:
+        return manual_map[name]
+
+    # 2. Tenta match exato
     if name in dc_names: return name
+    
+    # 3. Tenta fuzzy
     match = difflib.get_close_matches(name, dc_names, n=1, cutoff=0.4)
     return match[0] if match else name
 
@@ -139,23 +171,15 @@ def calc_kelly(prob, odd, fracao, banca):
     stk = (f*fracao*banca) if f>0 else 0
     return stk, f*fracao*100
 
-# --- 3. EXECUÇÃO PRINCIPAL ---
+# --- 3. EXECUÇÃO ---
 
-# Tenta pegar a chave
+# Verifica Chave
 try:
-    if "API_FOOTBALL_KEY" in st.secrets:
-        API_KEY = st.secrets["API_FOOTBALL_KEY"]
-    elif "google_creds" in st.secrets and "API_FOOTBALL_KEY" in st.secrets["google_creds"]:
-        API_KEY = st.secrets["google_creds"]["API_FOOTBALL_KEY"]
-    else:
-        API_KEY = None
-except: API_KEY = None
+    if "API_FOOTBALL_KEY" in st.secrets: API_KEY = st.secrets["API_FOOTBALL_KEY"]
+    elif "google_creds" in st.secrets and "API_FOOTBALL_KEY" in st.secrets["google_creds"]: API_KEY = st.secrets["google_creds"]["API_FOOTBALL_KEY"]
+    else: st.error("🚨 Chave API não encontrada!"); st.stop()
+except: st.error("🚨 Erro nos Secrets."); st.stop()
 
-if not API_KEY:
-    st.error("🚨 Chave API_FOOTBALL_KEY não encontrada nos Secrets!")
-    st.stop()
-
-# Mapeamento de Ligas
 LIGAS_MAP = {
     "Brasileirão": (71, "BSA"), "Champions League": (2, "CL"), "Premier League": (39, "PL"),
     "La Liga": (140, "PD"), "Serie A (Itália)": (135, "SA"), "Bundesliga": (78, "BL1"),
@@ -163,14 +187,10 @@ LIGAS_MAP = {
     "Primeira Liga": (94, "PPL"), "Euro": (4, "EC")
 }
 
-MERCADOS_INFO = {'vitoria_casa': 'Casa', 'empate': 'Empate', 'vitoria_visitante': 'Fora', 'over_2_5': 'Over 2.5', 'btts_sim': 'BTTS Sim'}
-
-# Conecta DB (Sem erro, pois a função já foi criada lá em cima)
 db = connect_db()
 
 with st.sidebar:
-    st.title("🤖 Robô v16.0")
-    st.info("Modo: Odds -> Jogos")
+    st.title("🤖 Robô v16.1 (Fix)")
     LIGA_NOME = st.selectbox("Liga:", LIGAS_MAP.keys())
     ID_LIGA, SIGLA_LIGA = LIGAS_MAP[LIGA_NOME]
     dt_sel = st.date_input("Data:", datetime.now(FUSO).date())
@@ -179,30 +199,30 @@ with st.sidebar:
     KELLY = st.slider("Kelly:", 0.01, 0.50, 0.10)
     MIN_PROB = st.slider("Prob. Mín:", 50, 90, 60)/100.0
 
-# --- PROCESSAMENTO ---
+# PROCESSAMENTO
 dc_data = load_dc(SIGLA_LIGA)
 st.subheader(f"{LIGA_NOME} - {dt_sel.strftime('%d/%m')}")
 
 lista_jogos = []
-msg_status = "Aguardando..."
+msgs_log = []
 
-with st.spinner("Buscando Odds (Hoje e Amanhã) e filtrando sua liga..."):
-    # 1. Busca Odds GERAIS (Sem filtro de liga para evitar erro de season)
-    todas_odds = buscar_todas_odds_range(API_KEY, dt_sel)
+with st.spinner("Buscando Odds (Fluxo Reverso)..."):
+    todas_odds, logs = buscar_todas_odds_range(API_KEY, dt_sel)
+    msgs_log.extend(logs)
     
     if not todas_odds:
-        msg_status = "Zero odds encontradas na API para hoje."
+        st.warning("Nenhuma odd encontrada na API para hoje/amanhã.")
+        with st.expander("Ver Detalhes (Debug)"):
+            for m in msgs_log: st.write(m)
     else:
-        # 2. Filtra IDs da Liga Selecionada
-        ids_para_buscar = []
+        # Filtra
+        ids_interesse = []
         mapa_odds = {}
         
         for item in todas_odds:
             if item['league']['id'] == ID_LIGA:
                 fid = item['fixture']['id']
-                ids_para_buscar.append(fid)
-                
-                # Processa mercados
+                ids_interesse.append(fid)
                 if item['bookmakers']:
                     bk = item['bookmakers'][0]
                     mkts = {}
@@ -213,13 +233,8 @@ with st.spinner("Buscando Odds (Hoje e Amanhã) e filtrando sua liga..."):
                         elif m['id'] == 8: mkts['btts'] = {v['value']: float(v['odd']) for v in m['values']}
                     mapa_odds[fid] = mkts
 
-        if not ids_para_buscar:
-            msg_status = f"API retornou {len(todas_odds)} odds, mas NENHUMA para a liga {LIGA_NOME}."
-        else:
-            # 3. Busca nomes dos times (Batch)
-            ids_unicos = list(set(ids_para_buscar))
-            detalhes = buscar_detalhes_jogos(API_KEY, ids_unicos)
-            
+        if ids_interesse:
+            detalhes = buscar_detalhes_jogos(API_KEY, list(set(ids_interesse)))
             for d in detalhes:
                 fid = d['fixture']['id']
                 if fid in mapa_odds:
@@ -228,16 +243,13 @@ with st.spinner("Buscando Odds (Hoje e Amanhã) e filtrando sua liga..."):
                         'hora': datetime.fromtimestamp(d['fixture']['timestamp'], FUSO).strftime('%H:%M'),
                         'casa': d['teams']['home']['name'],
                         'fora': d['teams']['away']['name'],
-                        'odds': mapa_odds[fid],
-                        'status': "💰"
+                        'odds': mapa_odds[fid]
                     })
+        else:
+            st.info(f"Odds encontradas ({len(todas_odds)}), mas nenhuma para {LIGA_NOME}.")
 
-if not lista_jogos:
-    st.warning(msg_status)
-    if "API retornou" in msg_status:
-        st.caption("Isso significa que a API está funcionando, mas a liga selecionada não tem jogos ou odds liberadas hoje.")
-else:
-    # RADAR AUTOMÁTICO
+if lista_jogos:
+    # RADAR
     radar = []
     for m in lista_jogos:
         p, x = predict(dc_data, m['casa'], m['fora'])
@@ -251,12 +263,12 @@ else:
                     ev = (prob * odd) - 1
                     if prob > MIN_PROB and ev > 0.05:
                         radar.append({'Jogo': f"{m['casa']} x {m['fora']}", 'Aposta': lbl, 'Odd': odd, 'Prob': prob, 'EV': ev*100})
-
+    
     if radar:
-        with st.expander("🔥 RADAR DE OPORTUNIDADES", expanded=True):
+        with st.expander("🔥 RADAR", expanded=True):
             st.dataframe(pd.DataFrame(radar).sort_values('EV', ascending=False), hide_index=True, use_container_width=True)
 
-    # LISTA DE JOGOS
+    # LISTA
     for m in lista_jogos:
         p, xg = predict(dc_data, m['casa'], m['fora'])
         c1, c2 = st.columns([3, 1])
@@ -266,25 +278,24 @@ else:
             st.rerun()
         c2.metric("xG", f"{xg[0]:.2f}-{xg[1]:.2f}" if xg else "-")
 
-# ÁREA DE ANÁLISE
+# ANÁLISE
 if 'sel_game' in st.session_state:
     st.divider()
     g = st.session_state.sel_game
     p = st.session_state.sel_p
-    
     st.markdown(f"### {g['casa']} x {g['fora']}")
     
-    with st.form("analise_form"):
-        c_odds = st.columns(2)
+    with st.form("analise"):
+        c = st.columns(2)
         o = g['odds']
-        def go(c, k): return o.get(c, {}).get(k, 1.0)
+        def go(cat, k): return o.get(cat, {}).get(k, 1.0)
         
-        with c_odds[0]:
+        with c[0]:
             uh = st.number_input("Casa", value=go('1x2', 'Home'))
             ud = st.number_input("Empate", value=go('1x2', 'Draw'))
             ua = st.number_input("Fora", value=go('1x2', 'Away'))
             uo = st.number_input("Over 2.5", value=go('goals', 'Over 2.5'))
-        with c_odds[1]:
+        with c[1]:
             ub = st.number_input("BTTS", value=go('btts', 'Yes'))
             u1x = st.number_input("1X", value=go('dc', 'Home/Draw'))
             ux2 = st.number_input("X2", value=go('dc', 'Draw/Away'))
