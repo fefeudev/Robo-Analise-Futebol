@@ -1,5 +1,5 @@
 # app.py
-# Versão 9.7 - FINAL (Correção KeyError 'xg' + ELC + Telegram)
+# Versão 9.5 - FINAL (Correção: Unificação de API - Resolve o bug "Sem Jogos")
 
 import streamlit as st
 import requests
@@ -116,6 +116,7 @@ def buscar_odds_mercado(codigo_liga_app):
         api_key = st.secrets["THE_ODDS_API_KEY"]
         sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_app)
         if not sport_key: return None
+        # Pede apenas h2h para economizar dados, pois a lista de jogos vem daqui
         url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
         params = {'apiKey': api_key, 'regions': 'eu,uk', 'markets': 'h2h', 'oddsFormat': 'decimal'}
         r = requests.get(url, params=params, timeout=5)
@@ -123,6 +124,9 @@ def buscar_odds_mercado(codigo_liga_app):
     except: pass
     return []
 
+# --- CORREÇÃO DO BUG "SEM JOGOS" ---
+# Agora usamos a própria API de Odds para montar a lista de jogos.
+# Se tem odds, tem jogo.
 @st.cache_data
 def buscar_jogos_unificado(codigo_liga_app, data_selecionada_dt):
     dados_api = buscar_odds_mercado(codigo_liga_app)
@@ -132,20 +136,25 @@ def buscar_jogos_unificado(codigo_liga_app, data_selecionada_dt):
     data_str_alvo = data_selecionada_dt.strftime('%Y-%m-%d')
     
     for jogo in dados_api:
+        # A data vem como "2025-12-10T19:45:00Z"
+        # Pegamos só os 10 primeiros caracteres (YYYY-MM-DD)
         data_jogo_api = jogo['commence_time'][:10]
+        
         if data_jogo_api == data_str_alvo:
             jogos_filtrados.append({
                 'time_casa': jogo['home_team'],
                 'time_visitante': jogo['away_team'],
                 'data': data_jogo_api,
-                'dados_completos': jogo 
+                'dados_completos': jogo # Passamos o objeto inteiro para facilitar
             })
+            
     return jogos_filtrados
 
 def encontrar_jogo_fuzzy(lista_odds, time_casa_robo, time_fora_robo):
+    # Função mantida para compatibilidade, mas o novo método já traz os dados exatos
     if not lista_odds: return None
     times_api = [j['home_team'] for j in lista_odds]
-    match = get_close_matches(time_casa_robo, times_api, n=1, cutoff=0.3)
+    match = get_close_matches(time_casa_robo, times_api, n=1, cutoff=0.4)
     if match:
         nome_real = match[0]
         for jogo in lista_odds:
@@ -178,17 +187,18 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         adv = dados['vantagem_casa']
         rho = dados.get('rho', 0.0)
         
-        t1_real = get_close_matches(t1, f.keys(), n=1, cutoff=0.3)
-        t2_real = get_close_matches(t2, f.keys(), n=1, cutoff=0.3)
+        # Tenta achar os nomes no JSON (Dixon Coles)
+        # As vezes a Odds API manda "Man City" e o JSON tem "Manchester City"
+        t1_real = get_close_matches(t1, f.keys(), n=1, cutoff=0.4)
+        t2_real = get_close_matches(t2, f.keys(), n=1, cutoff=0.4)
         
-        if not t1_real: return None, f"Time não encontrado no JSON: {t1}"
-        if not t2_real: return None, f"Time não encontrado no JSON: {t2}"
+        if not t1_real or not t2_real: return None, None
         
-        t1_key = t1_real[0]
-        t2_key = t2_real[0]
+        t1 = t1_real[0]
+        t2 = t2_real[0]
 
-        l = np.exp(f[t1_key]['ataque'] + f[t2_key]['defesa'] + adv)
-        m = np.exp(f[t2_key]['ataque'] + f[t1_key]['defesa'])
+        l = np.exp(f[t1]['ataque'] + f[t2]['defesa'] + adv)
+        m = np.exp(f[t2]['ataque'] + f[t1]['defesa'])
         
         def tau(x, y, l, m, r):
             if r == 0: return 1
@@ -214,7 +224,7 @@ def prever_jogo_dixon_coles(dados, t1, t2):
             'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total
         }
         return res, (l, m)
-    except Exception as e: return None, str(e)
+    except: return None, None
 
 # ==============================================================================
 # 🖥️ INTERFACE
@@ -261,6 +271,8 @@ tab1, tab2 = st.tabs(["📊 Jogos", "📈 Histórico"])
 with tab1:
     st.header(f"{EMOJIS.get(LIGA_ATUAL,'')} Jogos: {data_sel.strftime('%d/%m/%Y')}")
     
+    # --- AQUI ESTA A MAGICA DA CORREÇÃO ---
+    # Usamos buscar_jogos_unificado em vez de Football Data API
     jogos = buscar_jogos_unificado(LIGA_ATUAL, data_sel)
     
     if not jogos: st.warning("Nenhum jogo encontrado nesta data (ou sem odds abertas).")
@@ -268,6 +280,8 @@ with tab1:
         for i, jogo in enumerate(jogos):
             with st.expander(f"⚽ {jogo['time_casa']} x {jogo['time_visitante']}"):
                 
+                # Como já temos os dados da API unificada, não precisamos buscar de novo
+                # Mas para manter o código organizado, extraímos os bookmakers daqui
                 jogo_api_dados = jogo['dados_completos']
                 
                 col_res1, col_res2 = st.columns([1.2, 1.8])
@@ -310,21 +324,17 @@ with tab1:
                     key_analise = f"analise_{i}_{jogo['time_casa']}"
                     
                     if st.button("Calcular Probabilidades", key=f"btn_calc_{i}"):
-                        res, info_extra = prever_jogo_dixon_coles(dados_dc, jogo['time_casa'], jogo['time_visitante'])
-                        
-                        if res:
-                            st.session_state[key_analise] = {'res': res, 'odds': odds_reais, 'xg': info_extra}
-                        else:
-                            st.error(f"Erro: {info_extra}")
+                        res, xg = prever_jogo_dixon_coles(dados_dc, jogo['time_casa'], jogo['time_visitante'])
+                        st.session_state[key_analise] = {'res': res, 'odds': odds_reais, 'xg': xg}
                     
                     if key_analise in st.session_state:
                         dados_salvos = st.session_state[key_analise]
                         res = dados_salvos['res']
                         odds_usadas = dados_salvos['odds']
-                        # CORREÇÃO AQUI: USA .get() PARA NÃO DAR CRASH SE FOR VELHO
-                        xg = dados_salvos.get('xg') 
+                        xg = dados_salvos['xg']
                         
                         if res:
+                            # --- MENSAGEM TELEGRAM ---
                             msg_telegram = "<b>TIPS I.A</b>\n"
                             msg_telegram += f"🔥 <b>Oportunidade (DIXON_COLES)</b> 🔥\n\n"
                             msg_telegram += f"<b>Liga:</b> {EMOJIS.get(LIGA_ATUAL, '🏳️')} {l_nome}\n"
