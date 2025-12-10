@@ -1,5 +1,5 @@
 # app.py
-# Versão 9.4 - FINAL (ELC Adicionado)
+# Versão 9.5 - FINAL (Correção: Unificação de API - Resolve o bug "Sem Jogos")
 
 import streamlit as st
 import requests
@@ -94,13 +94,13 @@ def enviar_telegram(msg):
         st.error(f"Erro Telegram: {e}")
 
 # ==============================================================================
-# 🌐 INTEGRAÇÃO COM THE ODDS API
+# 🌐 INTEGRAÇÃO COM THE ODDS API (UNIFICADA)
 # ==============================================================================
 
 MAPA_LIGAS_ODDS = {
     "CL": "soccer_uefa_champs_league",
     "PL": "soccer_epl",
-    "ELC": "soccer_efl_champ",  # <--- ADICIONADO AQUI (Championship)
+    "ELC": "soccer_efl_champ",
     "PD": "soccer_spain_la_liga",
     "SA": "soccer_italy_serie_a",
     "BL1": "soccer_germany_bundesliga",
@@ -116,6 +116,7 @@ def buscar_odds_mercado(codigo_liga_app):
         api_key = st.secrets["THE_ODDS_API_KEY"]
         sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_app)
         if not sport_key: return None
+        # Pede apenas h2h para economizar dados, pois a lista de jogos vem daqui
         url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
         params = {'apiKey': api_key, 'regions': 'eu,uk', 'markets': 'h2h', 'oddsFormat': 'decimal'}
         r = requests.get(url, params=params, timeout=5)
@@ -123,7 +124,34 @@ def buscar_odds_mercado(codigo_liga_app):
     except: pass
     return []
 
+# --- CORREÇÃO DO BUG "SEM JOGOS" ---
+# Agora usamos a própria API de Odds para montar a lista de jogos.
+# Se tem odds, tem jogo.
+@st.cache_data
+def buscar_jogos_unificado(codigo_liga_app, data_selecionada_dt):
+    dados_api = buscar_odds_mercado(codigo_liga_app)
+    if not dados_api: return []
+    
+    jogos_filtrados = []
+    data_str_alvo = data_selecionada_dt.strftime('%Y-%m-%d')
+    
+    for jogo in dados_api:
+        # A data vem como "2025-12-10T19:45:00Z"
+        # Pegamos só os 10 primeiros caracteres (YYYY-MM-DD)
+        data_jogo_api = jogo['commence_time'][:10]
+        
+        if data_jogo_api == data_str_alvo:
+            jogos_filtrados.append({
+                'time_casa': jogo['home_team'],
+                'time_visitante': jogo['away_team'],
+                'data': data_jogo_api,
+                'dados_completos': jogo # Passamos o objeto inteiro para facilitar
+            })
+            
+    return jogos_filtrados
+
 def encontrar_jogo_fuzzy(lista_odds, time_casa_robo, time_fora_robo):
+    # Função mantida para compatibilidade, mas o novo método já traz os dados exatos
     if not lista_odds: return None
     times_api = [j['home_team'] for j in lista_odds]
     match = get_close_matches(time_casa_robo, times_api, n=1, cutoff=0.4)
@@ -143,25 +171,6 @@ def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
     except: pass
     return 0, 0, 0
 
-@st.cache_data 
-def criar_headers_api():
-    try: return {"X-Auth-Token": st.secrets["THE_ODDS_API_KEY"]} 
-    except: return {}
-
-def fazer_requisicao_api(endpoint, params):
-    try:
-        headers = {}
-        if "FOOTBALL_DATA_KEY" in st.secrets:
-             headers = {"X-Auth-Token": st.secrets["FOOTBALL_DATA_KEY"]}
-        return requests.get("https://api.football-data.org/v4/" + endpoint, headers=headers, params=params).json()
-    except: return None
-
-@st.cache_data
-def buscar_jogos_por_data(id_liga, data_str):
-    d = fazer_requisicao_api(f"competitions/{id_liga}/matches", {"dateFrom": data_str, "dateTo": data_str})
-    if not d or 'matches' not in d: return []
-    return [{'time_casa': m['homeTeam']['name'], 'time_visitante': m['awayTeam']['name'], 'data': m['utcDate']} for m in d['matches']]
-
 # ==============================================================================
 # 🧠 CÉREBRO DIXON-COLES
 # ==============================================================================
@@ -177,7 +186,16 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         f = dados['forcas']
         adv = dados['vantagem_casa']
         rho = dados.get('rho', 0.0)
-        if t1 not in f or t2 not in f: return None, None
+        
+        # Tenta achar os nomes no JSON (Dixon Coles)
+        # As vezes a Odds API manda "Man City" e o JSON tem "Manchester City"
+        t1_real = get_close_matches(t1, f.keys(), n=1, cutoff=0.4)
+        t2_real = get_close_matches(t2, f.keys(), n=1, cutoff=0.4)
+        
+        if not t1_real or not t2_real: return None, None
+        
+        t1 = t1_real[0]
+        t2 = t2_real[0]
 
         l = np.exp(f[t1]['ataque'] + f[t2]['defesa'] + adv)
         m = np.exp(f[t2]['ataque'] + f[t1]['defesa'])
@@ -212,7 +230,6 @@ def prever_jogo_dixon_coles(dados, t1, t2):
 # 🖥️ INTERFACE
 # ==============================================================================
 
-# ADICIONADO "Championship": "ELC" ABAIXO
 LIGAS = {
     "Champions League": "CL", 
     "Premier League": "PL", 
@@ -222,8 +239,6 @@ LIGAS = {
     "Serie A": "SA", 
     "Bundesliga": "BL1"
 }
-
-# ADICIONADO "ELC" ABAIXO
 EMOJIS = {"CL": "🇪🇺", "PL": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "ELC": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "BSA": "🇧🇷", "PD": "🇪🇸", "SA": "🇮🇹", "BL1": "🇩🇪"}
 
 db_sheet = conectar_ao_banco_de_dados()
@@ -255,16 +270,19 @@ tab1, tab2 = st.tabs(["📊 Jogos", "📈 Histórico"])
 
 with tab1:
     st.header(f"{EMOJIS.get(LIGA_ATUAL,'')} Jogos: {data_sel.strftime('%d/%m/%Y')}")
-    jogos = buscar_jogos_por_data(LIGA_ATUAL, data_sel.strftime('%Y-%m-%d'))
     
-    if not jogos: st.warning("Nenhum jogo encontrado.")
+    # --- AQUI ESTA A MAGICA DA CORREÇÃO ---
+    # Usamos buscar_jogos_unificado em vez de Football Data API
+    jogos = buscar_jogos_unificado(LIGA_ATUAL, data_sel)
+    
+    if not jogos: st.warning("Nenhum jogo encontrado nesta data (ou sem odds abertas).")
     else:
-        odds_api = buscar_odds_mercado(LIGA_ATUAL)
-        
         for i, jogo in enumerate(jogos):
             with st.expander(f"⚽ {jogo['time_casa']} x {jogo['time_visitante']}"):
                 
-                jogo_odds = encontrar_jogo_fuzzy(odds_api, jogo['time_casa'], jogo['time_visitante'])
+                # Como já temos os dados da API unificada, não precisamos buscar de novo
+                # Mas para manter o código organizado, extraímos os bookmakers daqui
+                jogo_api_dados = jogo['dados_completos']
                 
                 col_res1, col_res2 = st.columns([1.2, 1.8])
                 odds_reais = {}
@@ -272,39 +290,33 @@ with tab1:
                 # --- COLUNA 1: ODDS ---
                 with col_res1:
                     st.markdown("#### 🏦 Odds")
-                    if jogo_odds:
-                        bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] == 'pinnacle'), None)
-                        if not bookie: bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] in ['bet365', 'onexbet']), None)
+                    bookie = next((b for b in jogo_api_dados['bookmakers'] if b['key'] == 'pinnacle'), None)
+                    if not bookie: bookie = next((b for b in jogo_api_dados['bookmakers'] if b['key'] in ['bet365', 'onexbet']), None)
+                    
+                    if bookie:
+                        st.caption(f"Fonte: {bookie['title']}")
+                        outs_h2h = next((m['outcomes'] for m in bookie['markets'] if m['key'] == 'h2h'), [])
+                        dict_h2h = {o['name']: o['price'] for o in outs_h2h}
                         
-                        if bookie:
-                            st.caption(f"Fonte: {bookie['title']}")
-                            outs_h2h = next((m['outcomes'] for m in bookie['markets'] if m['key'] == 'h2h'), [])
-                            dict_h2h = {o['name']: o['price'] for o in outs_h2h}
-                            
-                            h = dict_h2h.get(jogo_odds['home_team']) or dict_h2h.get('Home', 0)
-                            d = dict_h2h.get('Draw', 0)
-                            a = dict_h2h.get(jogo_odds['away_team']) or dict_h2h.get('Away', 0)
-                            
-                            c1, c2, c3 = st.columns(3)
-                            c1.metric("Casa", h)
-                            c2.metric("Emp", d)
-                            c3.metric("Fora", a)
-                            
-                            if h and d and a:
-                                dc_1x, dc_x2, dc_12 = calcular_odds_chance_dupla(h, d, a)
-                                st.markdown("**Dupla Chance (Calc.)**")
-                                c4, c5, c6 = st.columns(3)
-                                c4.metric("1X", f"{dc_1x:.2f}")
-                                c5.metric("X2", f"{dc_x2:.2f}")
-                                c6.metric("12", f"{dc_12:.2f}")
-                                odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
-                        else: st.warning("Sem odds na região.")
+                        h = dict_h2h.get(jogo['time_casa']) or dict_h2h.get('Home', 0)
+                        d = dict_h2h.get('Draw', 0)
+                        a = dict_h2h.get(jogo['time_visitante']) or dict_h2h.get('Away', 0)
+                        
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Casa", h)
+                        c2.metric("Emp", d)
+                        c3.metric("Fora", a)
+                        
+                        if h and d and a:
+                            dc_1x, dc_x2, dc_12 = calcular_odds_chance_dupla(h, d, a)
+                            st.markdown("**Dupla Chance (Calc.)**")
+                            c4, c5, c6 = st.columns(3)
+                            c4.metric("1X", f"{dc_1x:.2f}")
+                            c5.metric("X2", f"{dc_x2:.2f}")
+                            c6.metric("12", f"{dc_12:.2f}")
+                            odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
                     else:
-                        st.info("Jogo não mapeado.")
-                        h = st.number_input("Casa", 1.0, key=f"h{i}")
-                        d = st.number_input("Emp", 1.0, key=f"d{i}")
-                        a = st.number_input("Fora", 1.0, key=f"a{i}")
-                        odds_reais = {'vitoria_casa':h, 'empate':d, 'vitoria_visitante':a}
+                        st.warning("Odds indisponíveis na região.")
 
                 # --- COLUNA 2: ESTATÍSTICA ---
                 with col_res2:
@@ -322,14 +334,15 @@ with tab1:
                         xg = dados_salvos['xg']
                         
                         if res:
-                            # --- MENSAGEM ESTILIZADA ---
+                            # --- MENSAGEM TELEGRAM ---
                             msg_telegram = "<b>TIPS I.A</b>\n"
                             msg_telegram += f"🔥 <b>Oportunidade (DIXON_COLES)</b> 🔥\n\n"
                             msg_telegram += f"<b>Liga:</b> {EMOJIS.get(LIGA_ATUAL, '🏳️')} {l_nome}\n"
                             msg_telegram += f"<b>Jogo:</b> ⚽ {jogo['time_casa']} vs {jogo['time_visitante']}\n\n"
-                            msg_telegram += f"🧠 <b>Previsão do Cérebro (xG):</b>\n"
-                            msg_telegram += f"<code>xG Casa: {xg[0]:.2f}</code>\n"
-                            msg_telegram += f"<code>xG Visitante: {xg[1]:.2f}</code>\n"
+                            if xg:
+                                msg_telegram += f"🧠 <b>Previsão do Cérebro (xG):</b>\n"
+                                msg_telegram += f"<code>xG Casa: {xg[0]:.2f}</code>\n"
+                                msg_telegram += f"<code>xG Visitante: {xg[1]:.2f}</code>\n"
                             msg_telegram += "------------------------------\n"
                             
                             tem_valor = False
@@ -381,7 +394,7 @@ with tab1:
                                 if st.button("Enviar Telegram 📱", key=f"btn_env_{i}"):
                                     enviar_telegram(msg_telegram)
                             else:
-                                if st.button("Forçar Telegram (Teste)", key=f"btn_force_{i}"):
+                                if st.button("Forçar Telegram", key=f"btn_force_{i}"):
                                     enviar_telegram(msg_telegram + "\n(Envio Forçado)")
                         else: st.error("Erro cálculo.")
 
