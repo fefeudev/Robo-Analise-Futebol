@@ -1,5 +1,5 @@
 # app.py
-# Versão 9.6 - FINAL (Correção ELC: Fuzzy Matching mais tolerante)
+# Versão 9.7 - FINAL (Correção KeyError 'xg' + ELC + Telegram)
 
 import streamlit as st
 import requests
@@ -145,7 +145,7 @@ def buscar_jogos_unificado(codigo_liga_app, data_selecionada_dt):
 def encontrar_jogo_fuzzy(lista_odds, time_casa_robo, time_fora_robo):
     if not lista_odds: return None
     times_api = [j['home_team'] for j in lista_odds]
-    match = get_close_matches(time_casa_robo, times_api, n=1, cutoff=0.3) # Tolerância aumentada
+    match = get_close_matches(time_casa_robo, times_api, n=1, cutoff=0.3)
     if match:
         nome_real = match[0]
         for jogo in lista_odds:
@@ -163,7 +163,7 @@ def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
     return 0, 0, 0
 
 # ==============================================================================
-# 🧠 CÉREBRO DIXON-COLES (COM CORREÇÃO PARA ELC)
+# 🧠 CÉREBRO DIXON-COLES
 # ==============================================================================
 
 @st.cache_data
@@ -178,13 +178,9 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         adv = dados['vantagem_casa']
         rho = dados.get('rho', 0.0)
         
-        # --- AQUI ESTAVA O ERRO DA ELC ---
-        # Relaxei o cutoff para 0.3 (era 0.4 ou 0.6)
-        # A ELC tem nomes muito diferentes (ex: "Sheff Wed" vs "Sheffield Wednesday")
         t1_real = get_close_matches(t1, f.keys(), n=1, cutoff=0.3)
         t2_real = get_close_matches(t2, f.keys(), n=1, cutoff=0.3)
         
-        # Se não achar, retorna os nomes que falharam para o erro na tela
         if not t1_real: return None, f"Time não encontrado no JSON: {t1}"
         if not t2_real: return None, f"Time não encontrado no JSON: {t2}"
         
@@ -319,14 +315,14 @@ with tab1:
                         if res:
                             st.session_state[key_analise] = {'res': res, 'odds': odds_reais, 'xg': info_extra}
                         else:
-                            # Mostra o erro exato (Qual time não foi encontrado)
                             st.error(f"Erro: {info_extra}")
                     
                     if key_analise in st.session_state:
                         dados_salvos = st.session_state[key_analise]
                         res = dados_salvos['res']
                         odds_usadas = dados_salvos['odds']
-                        xg = dados_salvos['xg']
+                        # CORREÇÃO AQUI: USA .get() PARA NÃO DAR CRASH SE FOR VELHO
+                        xg = dados_salvos.get('xg') 
                         
                         if res:
                             msg_telegram = "<b>TIPS I.A</b>\n"
@@ -390,6 +386,7 @@ with tab1:
                             else:
                                 if st.button("Forçar Telegram", key=f"btn_force_{i}"):
                                     enviar_telegram(msg_telegram + "\n(Envio Forçado)")
+                        else: st.error("Erro cálculo.")
 
 with tab2:
     st.header("Histórico")
