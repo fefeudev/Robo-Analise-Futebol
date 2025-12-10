@@ -106,8 +106,7 @@ MAPA_LIGAS_ODDS = {
     "FL1": "soccer_france_ligue_one",
     "BSA": "soccer_brazil_campeonato",
     "PPL": "soccer_portugal_primeira_liga",
-    "DED": "soccer_netherlands_eredivisie",
-    "ELC": "soccer_efl_champ"
+    "DED": "soccer_netherlands_eredivisie"
 }
 
 @st.cache_data(ttl=3600)
