@@ -1,5 +1,5 @@
 # app.py
-# Versão 8.9 - CLEAN + CORREÇÃO DE BOTÃO (Persistence)
+# Versão 9.0 - FINAL (Telegram OK + Visual Chance Dupla Restaurado)
 
 import streamlit as st
 import requests
@@ -17,7 +17,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô Híbrido Clean",
+    page_title="Robô Híbrido Elite",
     page_icon="🎯", 
     layout="wide"
 )
@@ -204,7 +204,6 @@ def criar_headers_api():
 def fazer_requisicao_api(endpoint, params):
     try:
         headers = {}
-        # Tenta pegar a chave do football-data se existir
         if "FOOTBALL_DATA_KEY" in st.secrets:
              headers = {"X-Auth-Token": st.secrets["FOOTBALL_DATA_KEY"]}
         return requests.get("https://api.football-data.org/v4/" + endpoint, headers=headers, params=params).json()
@@ -239,7 +238,7 @@ with st.sidebar:
     
     st.divider()
     if st.button("Enviar Msg de Teste 📨"):
-        enviar_telegram("🤖 <b>Teste do Robô:</b> Conexão OK!")
+        enviar_telegram("🤖 <b>Teste do Robô:</b> Conexão estabelecida com sucesso!")
 
 # --- CARREGA CÉREBRO ---
 dados_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
@@ -265,9 +264,9 @@ with tab1:
                 col_res1, col_res2 = st.columns([1.2, 1.8])
                 odds_reais = {}
                 
-                # --- COLUNA 1: ODDS ---
+                # --- COLUNA 1: ODDS (VISUAL RESTAURADO) ---
                 with col_res1:
-                    st.markdown("#### 🏦 Odds")
+                    st.markdown("#### 🏦 Odds (Mercado)")
                     if jogo_odds:
                         bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] == 'pinnacle'), None)
                         if not bookie: bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] in ['bet365', 'onexbet']), None)
@@ -287,7 +286,16 @@ with tab1:
                             c3.metric("Fora", a)
                             
                             if h and d and a:
+                                # --- AQUI ESTÁ A MUDANÇA: MOSTRANDO VISUALMENTE A CHANCE DUPLA ---
                                 dc_1x, dc_x2, dc_12 = calcular_odds_chance_dupla(h, d, a)
+                                
+                                st.markdown("**Dupla Chance (Calc.)**")
+                                c4, c5, c6 = st.columns(3)
+                                c4.metric("1X", f"{dc_1x:.2f}")
+                                c5.metric("X2", f"{dc_x2:.2f}")
+                                c6.metric("12", f"{dc_12:.2f}")
+                                # -----------------------------------------------------------------
+                                
                                 odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
                         else:
                             st.warning("Sem odds na região.")
@@ -298,19 +306,16 @@ with tab1:
                         a = st.number_input("Fora", 1.0, key=f"a{i}")
                         odds_reais = {'vitoria_casa':h, 'empate':d, 'vitoria_visitante':a}
 
-                # --- COLUNA 2: ESTATÍSTICA (CORREÇÃO DE BOTÃO) ---
+                # --- COLUNA 2: ESTATÍSTICA ---
                 with col_res2:
                     st.markdown("#### 🧠 Análise")
                     
-                    # Chave única para o session_state deste jogo
                     key_analise = f"analise_{i}_{jogo['time_casa']}"
                     
                     if st.button("Calcular Probabilidades", key=f"btn_calc_{i}"):
                         res, xg = prever_jogo_dixon_coles(dados_dc, jogo['time_casa'], jogo['time_visitante'])
-                        # Salva no Session State para persistir após reload
                         st.session_state[key_analise] = {'res': res, 'odds': odds_reais}
                     
-                    # Verifica se já existe análise salva para este jogo
                     if key_analise in st.session_state:
                         dados_salvos = st.session_state[key_analise]
                         res = dados_salvos['res']
@@ -344,7 +349,6 @@ with tab1:
                                         msg_telegram += f"✅ <b>{nome}</b>: Odd {odd:.2f} (EV +{ev:.1f}%)\n"
                                         tem_valor = True
                                         
-                                        # Salvar DB (Só salva se ainda não salvou nesta sessão para evitar duplicata)
                                         if f"salvo_{key_analise}_{ch}" not in st.session_state:
                                             db = conectar_ao_banco_de_dados()
                                             salvar_analise_no_banco(db, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
