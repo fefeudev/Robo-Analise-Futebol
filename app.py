@@ -1,5 +1,5 @@
 # app.py
-# Versão 8.8 - CLEAN + DIAGNÓSTICO DE TELEGRAM
+# Versão 8.9 - CLEAN + CORREÇÃO DE BOTÃO (Persistence)
 
 import streamlit as st
 import requests
@@ -35,15 +35,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 📨 TELEGRAM (COM DIAGNÓSTICO DETALHADO)
+# 📨 TELEGRAM (COM DIAGNÓSTICO)
 # ==============================================================================
 def enviar_telegram(msg):
-    # 1. Tenta pegar as chaves (Debug: Imprime erro na tela se faltar)
     try:
         token = st.secrets["TELEGRAM_TOKEN"]
         chat_id = st.secrets["TELEGRAM_CHAT_ID"]
     except KeyError as e:
-        st.error(f"❌ ERRO CRÍTICO: Chave '{e}' não encontrada nos Secrets! Configure no painel do Streamlit.")
+        st.error(f"❌ Erro Secrets: {e}")
         return
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -53,14 +52,10 @@ def enviar_telegram(msg):
         r = requests.get(url, params=params, timeout=5)
         if r.status_code == 200:
             st.toast("Mensagem enviada com sucesso!", icon="✅")
-            return True
         else:
-            # Mostra o erro exato que o Telegram devolveu
             st.error(f"❌ Falha Telegram ({r.status_code}): {r.text}")
-            return False
     except Exception as e:
         st.error(f"❌ Erro de Conexão: {e}")
-        return False
 
 # ==============================================================================
 # 🌐 INTEGRAÇÃO COM THE ODDS API
@@ -118,7 +113,7 @@ def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
     return 0, 0, 0
 
 # ==============================================================================
-# 🧠 FUNÇÕES DO BANCO DE DADOS & UTILITÁRIOS
+# 🧠 FUNÇÕES DO BANCO DE DADOS
 # ==============================================================================
 
 @st.cache_resource 
@@ -155,20 +150,9 @@ def carregar_historico_do_banco(_sheet):
         return df, greens, reds
     except: return pd.DataFrame(), 0, 0
 
-@st.cache_data 
-def criar_headers_api():
-    try: return {"X-Auth-Token": st.secrets["THE_ODDS_API_KEY"]} 
-    except: return {}
-
-def fazer_requisicao_api(endpoint, params):
-    try:
-        # Tenta pegar a chave do football-data se existir, senao vai sem
-        headers = {}
-        if "FOOTBALL_DATA_KEY" in st.secrets:
-             headers = {"X-Auth-Token": st.secrets["FOOTBALL_DATA_KEY"]}
-        
-        return requests.get("https://api.football-data.org/v4/" + endpoint, headers=headers, params=params).json()
-    except: return None
+# ==============================================================================
+# 🧠 CÉREBRO DIXON-COLES
+# ==============================================================================
 
 @st.cache_data
 def carregar_cerebro_dixon_coles(id_liga):
@@ -212,6 +196,20 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         return res, (l, m)
     except: return None, None
 
+@st.cache_data 
+def criar_headers_api():
+    try: return {"X-Auth-Token": st.secrets["THE_ODDS_API_KEY"]} 
+    except: return {}
+
+def fazer_requisicao_api(endpoint, params):
+    try:
+        headers = {}
+        # Tenta pegar a chave do football-data se existir
+        if "FOOTBALL_DATA_KEY" in st.secrets:
+             headers = {"X-Auth-Token": st.secrets["FOOTBALL_DATA_KEY"]}
+        return requests.get("https://api.football-data.org/v4/" + endpoint, headers=headers, params=params).json()
+    except: return None
+
 @st.cache_data
 def buscar_jogos_por_data(id_liga, data_str):
     d = fazer_requisicao_api(f"competitions/{id_liga}/matches", {"dateFrom": data_str, "dateTo": data_str})
@@ -239,11 +237,9 @@ with st.sidebar:
     st.divider()
     prob_min = st.slider("Probabilidade Mínima %", 50, 90, 60) / 100
     
-    # --- NOVO: BOTÃO DE DIAGNÓSTICO DO TELEGRAM ---
     st.divider()
-    st.subheader("🛠️ Diagnóstico Telegram")
     if st.button("Enviar Msg de Teste 📨"):
-        enviar_telegram("🤖 <b>Teste do Robô:</b> Conexão estabelecida com sucesso!")
+        enviar_telegram("🤖 <b>Teste do Robô:</b> Conexão OK!")
 
 # --- CARREGA CÉREBRO ---
 dados_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
@@ -257,7 +253,7 @@ with tab1:
     jogos = buscar_jogos_por_data(LIGA_ATUAL, data_sel.strftime('%Y-%m-%d'))
     
     if not jogos:
-        st.warning("Nenhum jogo encontrado nesta data. (Se estiver vazio, a API Football Data pode estar sem jogos hoje)")
+        st.warning("Nenhum jogo encontrado nesta data.")
     else:
         odds_api = buscar_odds_mercado(LIGA_ATUAL)
         
@@ -267,11 +263,11 @@ with tab1:
                 jogo_odds = encontrar_jogo_fuzzy(odds_api, jogo['time_casa'], jogo['time_visitante'])
                 
                 col_res1, col_res2 = st.columns([1.2, 1.8])
-                
                 odds_reais = {}
                 
+                # --- COLUNA 1: ODDS ---
                 with col_res1:
-                    st.markdown("#### 🏦 Odds (Mercado)")
+                    st.markdown("#### 🏦 Odds")
                     if jogo_odds:
                         bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] == 'pinnacle'), None)
                         if not bookie: bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] in ['bet365', 'onexbet']), None)
@@ -292,31 +288,39 @@ with tab1:
                             
                             if h and d and a:
                                 dc_1x, dc_x2, dc_12 = calcular_odds_chance_dupla(h, d, a)
-                                st.markdown("**Dupla Chance (Calc.)**")
-                                c4, c5, c6 = st.columns(3)
-                                c4.metric("1X", f"{dc_1x:.2f}")
-                                c5.metric("X2", f"{dc_x2:.2f}")
-                                c6.metric("12", f"{dc_12:.2f}")
                                 odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
                         else:
-                            st.warning("Odds indisponíveis na região.")
+                            st.warning("Sem odds na região.")
                     else:
-                        st.info("Jogo não mapeado na API Odds.")
+                        st.info("Jogo não mapeado.")
                         h = st.number_input("Casa", 1.0, key=f"h{i}")
                         d = st.number_input("Emp", 1.0, key=f"d{i}")
                         a = st.number_input("Fora", 1.0, key=f"a{i}")
                         odds_reais = {'vitoria_casa':h, 'empate':d, 'vitoria_visitante':a}
 
+                # --- COLUNA 2: ESTATÍSTICA (CORREÇÃO DE BOTÃO) ---
                 with col_res2:
-                    st.markdown("#### 🧠 Estatística & Valor")
-                    if st.button("Calcular Probabilidades", key=f"b{i}"):
+                    st.markdown("#### 🧠 Análise")
+                    
+                    # Chave única para o session_state deste jogo
+                    key_analise = f"analise_{i}_{jogo['time_casa']}"
+                    
+                    if st.button("Calcular Probabilidades", key=f"btn_calc_{i}"):
                         res, xg = prever_jogo_dixon_coles(dados_dc, jogo['time_casa'], jogo['time_visitante'])
+                        # Salva no Session State para persistir após reload
+                        st.session_state[key_analise] = {'res': res, 'odds': odds_reais}
+                    
+                    # Verifica se já existe análise salva para este jogo
+                    if key_analise in st.session_state:
+                        dados_salvos = st.session_state[key_analise]
+                        res = dados_salvos['res']
+                        odds_usadas = dados_salvos['odds']
                         
                         if res:
                             msg_telegram = f"🔥 <b>{LIGA_ATUAL}</b>: {jogo['time_casa']} x {jogo['time_visitante']}\n\n"
                             tem_valor = False
                             
-                            st.caption("Comparação: Odd do Mercado vs Odd Justa do Robô")
+                            st.caption("Comparação: Mercado vs Robô")
                             col_p1, col_p2, col_p3 = st.columns(3)
                             
                             mercados_analise = [
@@ -326,7 +330,7 @@ with tab1:
                             
                             for ch, nome, c_idx in mercados_analise:
                                 prob = res.get(ch, 0)*100
-                                odd = odds_reais.get(ch, 0)
+                                odd = odds_usadas.get(ch, 0)
                                 delta = ""
                                 color = "off"
                                 
@@ -340,25 +344,28 @@ with tab1:
                                         msg_telegram += f"✅ <b>{nome}</b>: Odd {odd:.2f} (EV +{ev:.1f}%)\n"
                                         tem_valor = True
                                         
-                                        db = conectar_ao_banco_de_dados()
-                                        salvar_analise_no_banco(db, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
+                                        # Salvar DB (Só salva se ainda não salvou nesta sessão para evitar duplicata)
+                                        if f"salvo_{key_analise}_{ch}" not in st.session_state:
+                                            db = conectar_ao_banco_de_dados()
+                                            salvar_analise_no_banco(db, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
+                                            st.session_state[f"salvo_{key_analise}_{ch}"] = True
+
                                     elif ev > 0: delta = f"+{ev:.1f}%"
                                     else: 
                                         delta = f"{ev:.1f}%"
                                         color = "inverse"
                                 
-                                if c_idx==0: col_p1.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
-                                elif c_idx==1: col_p2.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
-                                else: col_p3.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
+                                metric_cols = [col_p1, col_p2, col_p3]
+                                metric_cols[c_idx].metric(nome, f"{prob:.1f}%", delta, delta_color=color)
 
                             if tem_valor:
-                                if st.button("Enviar Telegram 📱", key=f"tg{i}"):
+                                if st.button("Enviar Telegram 📱", key=f"btn_env_{i}"):
                                     enviar_telegram(msg_telegram)
                             else:
-                                if st.button("Forçar Envio Telegram", key=f"ftg{i}"):
+                                if st.button("Forçar Telegram (Teste)", key=f"btn_force_{i}"):
                                     enviar_telegram(msg_telegram + "\n(Envio Forçado)")
                         else:
-                            st.error("Sem dados estatísticos para este jogo.")
+                            st.error("Erro no cálculo.")
 
 with tab2:
     st.header("Histórico")
