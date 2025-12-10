@@ -1,5 +1,5 @@
 # app.py
-# Versão 9.3 - FINAL (Correção: Visual Chance Dupla + Telegram Estilizado)
+# Versão 9.4 - FINAL (ELC Adicionado)
 
 import streamlit as st
 import requests
@@ -100,6 +100,7 @@ def enviar_telegram(msg):
 MAPA_LIGAS_ODDS = {
     "CL": "soccer_uefa_champs_league",
     "PL": "soccer_epl",
+    "ELC": "soccer_efl_champ",  # <--- ADICIONADO AQUI (Championship)
     "PD": "soccer_spain_la_liga",
     "SA": "soccer_italy_serie_a",
     "BL1": "soccer_germany_bundesliga",
@@ -211,8 +212,19 @@ def prever_jogo_dixon_coles(dados, t1, t2):
 # 🖥️ INTERFACE
 # ==============================================================================
 
-LIGAS = {"Champions League": "CL", "Premier League": "PL", "Brasileirão": "BSA", "La Liga": "PD", "Serie A": "SA", "Bundesliga": "BL1"}
-EMOJIS = {"CL": "🇪🇺", "PL": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "BSA": "🇧🇷", "PD": "🇪🇸", "SA": "🇮🇹", "BL1": "🇩🇪"}
+# ADICIONADO "Championship": "ELC" ABAIXO
+LIGAS = {
+    "Champions League": "CL", 
+    "Premier League": "PL", 
+    "Championship": "ELC", 
+    "Brasileirão": "BSA", 
+    "La Liga": "PD", 
+    "Serie A": "SA", 
+    "Bundesliga": "BL1"
+}
+
+# ADICIONADO "ELC" ABAIXO
+EMOJIS = {"CL": "🇪🇺", "PL": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "ELC": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "BSA": "🇧🇷", "PD": "🇪🇸", "SA": "🇮🇹", "BL1": "🇩🇪"}
 
 db_sheet = conectar_ao_banco_de_dados()
 
@@ -257,7 +269,7 @@ with tab1:
                 col_res1, col_res2 = st.columns([1.2, 1.8])
                 odds_reais = {}
                 
-                # --- COLUNA 1: ODDS (AGORA COM CHANCE DUPLA VISUAL) ---
+                # --- COLUNA 1: ODDS ---
                 with col_res1:
                     st.markdown("#### 🏦 Odds")
                     if jogo_odds:
@@ -280,15 +292,11 @@ with tab1:
                             
                             if h and d and a:
                                 dc_1x, dc_x2, dc_12 = calcular_odds_chance_dupla(h, d, a)
-                                
-                                # --- O BLOCO QUE FALTAVA VOLTOU AQUI ---
                                 st.markdown("**Dupla Chance (Calc.)**")
                                 c4, c5, c6 = st.columns(3)
                                 c4.metric("1X", f"{dc_1x:.2f}")
                                 c5.metric("X2", f"{dc_x2:.2f}")
                                 c6.metric("12", f"{dc_12:.2f}")
-                                # ---------------------------------------
-                                
                                 odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
                         else: st.warning("Sem odds na região.")
                     else:
@@ -298,7 +306,7 @@ with tab1:
                         a = st.number_input("Fora", 1.0, key=f"a{i}")
                         odds_reais = {'vitoria_casa':h, 'empate':d, 'vitoria_visitante':a}
 
-                # --- COLUNA 2: ESTATÍSTICA + TELEGRAM ESTILIZADO ---
+                # --- COLUNA 2: ESTATÍSTICA ---
                 with col_res2:
                     st.markdown("#### 🧠 Análise")
                     key_analise = f"analise_{i}_{jogo['time_casa']}"
@@ -347,7 +355,6 @@ with tab1:
                                         delta = f"+{ev:.1f}% EV"
                                         color = "normal"
                                         
-                                        # Adiciona ao Telegram
                                         prob_impl = (1/odd)*100
                                         msg_telegram += f"✅ <b>Mercado: {nome}</b>\n"
                                         msg_telegram += f"<code>Odd: {odd:.2f} (Impl: {prob_impl:.1f}%)</code>\n"
@@ -357,7 +364,6 @@ with tab1:
                                         
                                         tem_valor = True
                                         
-                                        # Save DB (Evita duplicata)
                                         if f"salvo_{key_analise}_{ch}" not in st.session_state:
                                             if db_sheet:
                                                 salvou = salvar_analise_no_banco(db_sheet, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
@@ -387,3 +393,5 @@ with tab2:
         c1.metric("Greens ✅", g)
         c2.metric("Reds ❌", r)
         st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("⚠️ Banco de dados desconectado.")
