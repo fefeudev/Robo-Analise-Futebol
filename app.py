@@ -17,7 +17,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô Híbrido Clean",
+    page_title="Robô Híbrido",
     page_icon="🎯", 
     layout="wide"
 )
