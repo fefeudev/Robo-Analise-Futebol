@@ -1,5 +1,5 @@
 # app.py
-# Versão 9.1 - FINAL + CORREÇÃO DATABASE (Debug Ativado)
+# Versão 9.2 - FINAL (Telegram Estilizado "Tips I.A")
 
 import streamlit as st
 import requests
@@ -35,7 +35,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 🧠 FUNÇÕES DO BANCO DE DADOS (AGORA COM DEBUG)
+# 🧠 FUNÇÕES DO BANCO DE DADOS
 # ==============================================================================
 
 @st.cache_resource 
@@ -50,19 +50,16 @@ def conectar_ao_banco_de_dados():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # Tenta abrir a planilha
         sheet_url = st.secrets.GOOGLE_SHEET_URL
         sheet = client.open_by_url(sheet_url).sheet1
         return sheet
     except Exception as e:
-        # Se der erro na conexão inicial, não quebra o app, mas avisa no log
         print(f"Erro Conexão Sheets: {e}")
         return None
 
 def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
     if sheet:
         try:
-            # Tenta salvar
             nova_linha = [data, liga, jogo, mercado, float(odd), float(prob_robo)/100, float(valor)/100, "Aguardando ⏳"]
             sheet.append_row(nova_linha, value_input_option='USER_ENTERED')
             st.toast(f"Salvo no Histórico: {jogo}", icon="💾")
@@ -74,7 +71,7 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
         st.error("❌ Erro: Planilha desconectada. Verifique os Secrets.")
         return False
 
-@st.cache_data(ttl=10) # Cache curto para atualizar greens/reds rápido
+@st.cache_data(ttl=10)
 def carregar_historico_do_banco(_sheet):
     try:
         data = _sheet.get_all_values()
@@ -247,12 +244,10 @@ db_sheet = conectar_ao_banco_de_dados()
 with st.sidebar:
     st.title("🎯 Robô H2H + DC")
     
-    # Diagnóstico de Conexão
     if db_sheet:
         st.success("Google Sheets: Conectado ✅")
     else:
         st.error("Google Sheets: Desconectado ❌")
-        st.caption("Verifique se 'google_creds' está no secrets.")
 
     l_nome = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ATUAL = LIGAS[l_nome]
@@ -268,7 +263,7 @@ with st.sidebar:
     
     st.divider()
     if st.button("Enviar Msg de Teste 📨"):
-        enviar_telegram("🤖 <b>Teste do Robô:</b> Conexão OK!")
+        enviar_telegram("<b>TIPS I.A</b>\n🔥 <b>Teste do Robô:</b> Conexão OK!")
 
 # --- CARREGA CÉREBRO ---
 dados_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
@@ -332,7 +327,7 @@ with tab1:
                         a = st.number_input("Fora", 1.0, key=f"a{i}")
                         odds_reais = {'vitoria_casa':h, 'empate':d, 'vitoria_visitante':a}
 
-                # --- COLUNA 2: ESTATÍSTICA (COM SAVE ROBUSTO) ---
+                # --- COLUNA 2: ESTATÍSTICA ---
                 with col_res2:
                     st.markdown("#### 🧠 Análise")
                     
@@ -340,15 +335,25 @@ with tab1:
                     
                     if st.button("Calcular Probabilidades", key=f"btn_calc_{i}"):
                         res, xg = prever_jogo_dixon_coles(dados_dc, jogo['time_casa'], jogo['time_visitante'])
-                        st.session_state[key_analise] = {'res': res, 'odds': odds_reais}
+                        st.session_state[key_analise] = {'res': res, 'odds': odds_reais, 'xg': xg}
                     
                     if key_analise in st.session_state:
                         dados_salvos = st.session_state[key_analise]
                         res = dados_salvos['res']
                         odds_usadas = dados_salvos['odds']
+                        xg = dados_salvos['xg']
                         
                         if res:
-                            msg_telegram = f"🔥 <b>{LIGA_ATUAL}</b>: {jogo['time_casa']} x {jogo['time_visitante']}\n\n"
+                            # --- FORMATAÇÃO NOVA DA MENSAGEM TELEGRAM (ESTILO TIPS I.A) ---
+                            msg_telegram = "<b>TIPS I.A</b>\n"
+                            msg_telegram += f"🔥 <b>Oportunidade (DIXON_COLES)</b> 🔥\n\n"
+                            msg_telegram += f"<b>Liga:</b> {EMOJIS.get(LIGA_ATUAL, '🏳️')} {l_nome}\n"
+                            msg_telegram += f"<b>Jogo:</b> ⚽ {jogo['time_casa']} vs {jogo['time_visitante']}\n\n"
+                            msg_telegram += f"🧠 <b>Previsão do Cérebro (xG):</b>\n"
+                            msg_telegram += f"<code>xG Casa: {xg[0]:.2f}</code>\n"
+                            msg_telegram += f"<code>xG Visitante: {xg[1]:.2f}</code>\n"
+                            msg_telegram += "------------------------------\n"
+                            
                             tem_valor = False
                             
                             st.caption("Comparação: Mercado vs Robô")
@@ -372,10 +377,18 @@ with tab1:
                                     if ev > 3.0 and prob > (prob_min*100):
                                         delta = f"+{ev:.1f}% EV"
                                         color = "normal"
-                                        msg_telegram += f"✅ <b>{nome}</b>: Odd {odd:.2f} (EV +{ev:.1f}%)\n"
+                                        
+                                        # ADICIONA O BLOCO DE VALOR NA MENSAGEM
+                                        prob_impl = (1/odd)*100
+                                        msg_telegram += f"✅ <b>Mercado: {nome}</b>\n"
+                                        msg_telegram += f"<code>Odd: {odd:.2f} (Impl: {prob_impl:.1f}%)</code>\n"
+                                        msg_telegram += f"<code>Probabilidade: {prob:.2f}%</code>\n"
+                                        msg_telegram += f"<b>Valor: +{ev:.2f}%</b>\n"
+                                        msg_telegram += "------------------------------\n"
+                                        
                                         tem_valor = True
                                         
-                                        # SAVE NO DB (DEBUG ATIVADO)
+                                        # SAVE NO DB
                                         if f"salvo_{key_analise}_{ch}" not in st.session_state:
                                             if db_sheet:
                                                 salvou = salvar_analise_no_banco(db_sheet, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
@@ -396,7 +409,7 @@ with tab1:
                                 if st.button("Enviar Telegram 📱", key=f"btn_env_{i}"):
                                     enviar_telegram(msg_telegram)
                             else:
-                                if st.button("Forçar Telegram", key=f"btn_force_{i}"):
+                                if st.button("Forçar Telegram (Teste)", key=f"btn_force_{i}"):
                                     enviar_telegram(msg_telegram + "\n(Envio Forçado)")
                         else:
                             st.error("Erro no cálculo estatístico.")
@@ -410,4 +423,4 @@ with tab2:
         c2.metric("Reds ❌", r)
         st.dataframe(df, use_container_width=True)
     else:
-        st.warning("⚠️ Banco de dados desconectado. Verifique os Secrets.")
+        st.warning("⚠️ Banco de dados desconectado.")
