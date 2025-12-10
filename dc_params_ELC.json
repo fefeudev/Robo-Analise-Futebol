@@ -1,0 +1,104 @@
+{
+    "liga": "ELC",
+    "temporada": 2025,
+    "data_treinamento": "2025-12-09T23:20:43.519822",
+    "vantagem_casa": 0.2972153936832389,
+    "forcas": {
+        "Birmingham City FC": {
+            "ataque": 0.2590278102896083,
+            "defesa": -0.06270511943004485
+        },
+        "Blackburn Rovers FC": {
+            "ataque": -0.261520946362435,
+            "defesa": -0.05933864212031597
+        },
+        "Bristol City FC": {
+            "ataque": -0.013714204926770026,
+            "defesa": -0.04953175524890871
+        },
+        "Charlton Athletic FC": {
+            "ataque": -0.31651294145624426,
+            "defesa": -0.02809336850040925
+        },
+        "Coventry City FC": {
+            "ataque": 0.7207792847732982,
+            "defesa": -0.15861553096523187
+        },
+        "Derby County FC": {
+            "ataque": 0.05027453797921788,
+            "defesa": 0.12500194996228714
+        },
+        "Hull City AFC": {
+            "ataque": 0.29193699922634797,
+            "defesa": 0.31336777143359923
+        },
+        "Ipswich Town FC": {
+            "ataque": 0.3839454979497721,
+            "defesa": -0.12051002400869576
+        },
+        "Leicester City FC": {
+            "ataque": -0.027562346944303158,
+            "defesa": -0.050223067759067236
+        },
+        "Middlesbrough FC": {
+            "ataque": 0.11380040428924194,
+            "defesa": -0.20090420511931972
+        },
+        "Millwall FC": {
+            "ataque": -0.03787121254232847,
+            "defesa": -0.002345924984000771
+        },
+        "Norwich City FC": {
+            "ataque": -0.15698083614644182,
+            "defesa": 0.14286142680521155
+        },
+        "Oxford United FC": {
+            "ataque": -0.17848140612558025,
+            "defesa": -0.010524880380481074
+        },
+        "Portsmouth FC": {
+            "ataque": -0.48810370889873733,
+            "defesa": 0.02857405571895071
+        },
+        "Preston North End FC": {
+            "ataque": 0.038872883059226024,
+            "defesa": -0.17260507625694813
+        },
+        "Queens Park Rangers FC": {
+            "ataque": 0.029884789865468515,
+            "defesa": 0.2216405426890434
+        },
+        "Sheffield United FC": {
+            "ataque": 0.015202086291179459,
+            "defesa": 0.02773874633094304
+        },
+        "Sheffield Wednesday FC": {
+            "ataque": -0.41233739833904065,
+            "defesa": 0.3974590169198372
+        },
+        "Southampton FC": {
+            "ataque": 0.22947675239688253,
+            "defesa": 0.05896582757413794
+        },
+        "Stoke City FC": {
+            "ataque": 0.03623874734009605,
+            "defesa": -0.3366704628633096
+        },
+        "Swansea City AFC": {
+            "ataque": -0.14770369991581417,
+            "defesa": 0.2817963844482285
+        },
+        "Watford FC": {
+            "ataque": -0.03885002376426407,
+            "defesa": -0.04660149222972227
+        },
+        "West Bromwich Albion FC": {
+            "ataque": -0.07851661621476587,
+            "defesa": 0.019423293445058585
+        },
+        "Wrexham AFC": {
+            "ataque": -0.052987796130799056,
+            "defesa": -0.18849948507744524
+        }
+    }
+}
