@@ -1,5 +1,5 @@
 # app.py
-# Versão 9.0 - FINAL (Telegram OK + Visual Chance Dupla Restaurado)
+# Versão 9.1 - FINAL + CORREÇÃO DATABASE (Debug Ativado)
 
 import streamlit as st
 import requests
@@ -17,7 +17,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô Híbrido Elite",
+    page_title="Robô Híbrido Clean",
     page_icon="🎯", 
     layout="wide"
 )
@@ -35,14 +35,71 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 📨 TELEGRAM (COM DIAGNÓSTICO)
+# 🧠 FUNÇÕES DO BANCO DE DADOS (AGORA COM DEBUG)
+# ==============================================================================
+
+@st.cache_resource 
+def conectar_ao_banco_de_dados():
+    try:
+        # Verifica se as credenciais existem no secrets
+        if "google_creds" not in st.secrets:
+            return None
+            
+        creds_dict = dict(st.secrets.google_creds)
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive.file"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
+        # Tenta abrir a planilha
+        sheet_url = st.secrets.GOOGLE_SHEET_URL
+        sheet = client.open_by_url(sheet_url).sheet1
+        return sheet
+    except Exception as e:
+        # Se der erro na conexão inicial, não quebra o app, mas avisa no log
+        print(f"Erro Conexão Sheets: {e}")
+        return None
+
+def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
+    if sheet:
+        try:
+            # Tenta salvar
+            nova_linha = [data, liga, jogo, mercado, float(odd), float(prob_robo)/100, float(valor)/100, "Aguardando ⏳"]
+            sheet.append_row(nova_linha, value_input_option='USER_ENTERED')
+            st.toast(f"Salvo no Histórico: {jogo}", icon="💾")
+            return True
+        except Exception as e:
+            st.error(f"❌ Erro ao Salvar no Google Sheets: {e}")
+            return False
+    else:
+        st.error("❌ Erro: Planilha desconectada. Verifique os Secrets.")
+        return False
+
+@st.cache_data(ttl=10) # Cache curto para atualizar greens/reds rápido
+def carregar_historico_do_banco(_sheet):
+    try:
+        data = _sheet.get_all_values()
+        if len(data) < 2: return pd.DataFrame(), 0, 0
+        df = pd.DataFrame(data[1:], columns=data[0])
+        cols = ['Odd', 'Probabilidade', 'Valor']
+        for c in cols:
+            if c in df.columns:
+                df[c] = df[c].astype(str).str.replace(',', '.')
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+        df = df.dropna(subset=cols)
+        greens = df['Status'].value_counts().get('Green ✅', 0) if 'Status' in df.columns else 0
+        reds = df['Status'].value_counts().get('Red ❌', 0) if 'Status' in df.columns else 0
+        return df, greens, reds
+    except: return pd.DataFrame(), 0, 0
+
+# ==============================================================================
+# 📨 TELEGRAM
 # ==============================================================================
 def enviar_telegram(msg):
     try:
         token = st.secrets["TELEGRAM_TOKEN"]
         chat_id = st.secrets["TELEGRAM_CHAT_ID"]
     except KeyError as e:
-        st.error(f"❌ Erro Secrets: {e}")
+        st.error(f"❌ Erro Secrets Telegram: {e}")
         return
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -51,11 +108,11 @@ def enviar_telegram(msg):
     try:
         r = requests.get(url, params=params, timeout=5)
         if r.status_code == 200:
-            st.toast("Mensagem enviada com sucesso!", icon="✅")
+            st.toast("Enviado ao Telegram!", icon="✅")
         else:
             st.error(f"❌ Falha Telegram ({r.status_code}): {r.text}")
     except Exception as e:
-        st.error(f"❌ Erro de Conexão: {e}")
+        st.error(f"❌ Erro de Conexão Telegram: {e}")
 
 # ==============================================================================
 # 🌐 INTEGRAÇÃO COM THE ODDS API
@@ -112,43 +169,24 @@ def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
     except: pass
     return 0, 0, 0
 
-# ==============================================================================
-# 🧠 FUNÇÕES DO BANCO DE DADOS
-# ==============================================================================
+@st.cache_data 
+def criar_headers_api():
+    try: return {"X-Auth-Token": st.secrets["THE_ODDS_API_KEY"]} 
+    except: return {}
 
-@st.cache_resource 
-def conectar_ao_banco_de_dados():
+def fazer_requisicao_api(endpoint, params):
     try:
-        creds_dict = dict(st.secrets.google_creds)
-        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive.file"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        sheet = client.open_by_url(st.secrets.GOOGLE_SHEET_URL).sheet1
-        return sheet
+        headers = {}
+        if "FOOTBALL_DATA_KEY" in st.secrets:
+             headers = {"X-Auth-Token": st.secrets["FOOTBALL_DATA_KEY"]}
+        return requests.get("https://api.football-data.org/v4/" + endpoint, headers=headers, params=params).json()
     except: return None
 
-def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, valor):
-    if sheet:
-        try:
-            sheet.append_row([data, liga, jogo, mercado, float(odd), float(prob_robo)/100, float(valor)/100, "Aguardando ⏳"], value_input_option='USER_ENTERED')
-        except: pass
-
-@st.cache_data(ttl=60) 
-def carregar_historico_do_banco(_sheet):
-    try:
-        data = _sheet.get_all_values()
-        if len(data) < 2: return pd.DataFrame(), 0, 0
-        df = pd.DataFrame(data[1:], columns=data[0])
-        cols = ['Odd', 'Probabilidade', 'Valor']
-        for c in cols:
-            if c in df.columns:
-                df[c] = df[c].astype(str).str.replace(',', '.')
-                df[c] = pd.to_numeric(df[c], errors='coerce')
-        df = df.dropna(subset=cols)
-        greens = df['Status'].value_counts().get('Green ✅', 0) if 'Status' in df.columns else 0
-        reds = df['Status'].value_counts().get('Red ❌', 0) if 'Status' in df.columns else 0
-        return df, greens, reds
-    except: return pd.DataFrame(), 0, 0
+@st.cache_data
+def buscar_jogos_por_data(id_liga, data_str):
+    d = fazer_requisicao_api(f"competitions/{id_liga}/matches", {"dateFrom": data_str, "dateTo": data_str})
+    if not d or 'matches' not in d: return []
+    return [{'time_casa': m['homeTeam']['name'], 'time_visitante': m['awayTeam']['name'], 'data': m['utcDate']} for m in d['matches']]
 
 # ==============================================================================
 # 🧠 CÉREBRO DIXON-COLES
@@ -196,25 +234,6 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         return res, (l, m)
     except: return None, None
 
-@st.cache_data 
-def criar_headers_api():
-    try: return {"X-Auth-Token": st.secrets["THE_ODDS_API_KEY"]} 
-    except: return {}
-
-def fazer_requisicao_api(endpoint, params):
-    try:
-        headers = {}
-        if "FOOTBALL_DATA_KEY" in st.secrets:
-             headers = {"X-Auth-Token": st.secrets["FOOTBALL_DATA_KEY"]}
-        return requests.get("https://api.football-data.org/v4/" + endpoint, headers=headers, params=params).json()
-    except: return None
-
-@st.cache_data
-def buscar_jogos_por_data(id_liga, data_str):
-    d = fazer_requisicao_api(f"competitions/{id_liga}/matches", {"dateFrom": data_str, "dateTo": data_str})
-    if not d or 'matches' not in d: return []
-    return [{'time_casa': m['homeTeam']['name'], 'time_visitante': m['awayTeam']['name'], 'data': m['utcDate']} for m in d['matches']]
-
 # ==============================================================================
 # 🖥️ INTERFACE (STREAMLIT)
 # ==============================================================================
@@ -222,8 +241,19 @@ def buscar_jogos_por_data(id_liga, data_str):
 LIGAS = {"Champions League": "CL", "Premier League": "PL", "Brasileirão": "BSA", "La Liga": "PD", "Serie A": "SA", "Bundesliga": "BL1"}
 EMOJIS = {"CL": "🇪🇺", "PL": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "BSA": "🇧🇷", "PD": "🇪🇸", "SA": "🇮🇹", "BL1": "🇩🇪"}
 
+# Conexão DB Inicial
+db_sheet = conectar_ao_banco_de_dados()
+
 with st.sidebar:
     st.title("🎯 Robô H2H + DC")
+    
+    # Diagnóstico de Conexão
+    if db_sheet:
+        st.success("Google Sheets: Conectado ✅")
+    else:
+        st.error("Google Sheets: Desconectado ❌")
+        st.caption("Verifique se 'google_creds' está no secrets.")
+
     l_nome = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ATUAL = LIGAS[l_nome]
     
@@ -238,7 +268,7 @@ with st.sidebar:
     
     st.divider()
     if st.button("Enviar Msg de Teste 📨"):
-        enviar_telegram("🤖 <b>Teste do Robô:</b> Conexão estabelecida com sucesso!")
+        enviar_telegram("🤖 <b>Teste do Robô:</b> Conexão OK!")
 
 # --- CARREGA CÉREBRO ---
 dados_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
@@ -264,9 +294,9 @@ with tab1:
                 col_res1, col_res2 = st.columns([1.2, 1.8])
                 odds_reais = {}
                 
-                # --- COLUNA 1: ODDS (VISUAL RESTAURADO) ---
+                # --- COLUNA 1: ODDS ---
                 with col_res1:
-                    st.markdown("#### 🏦 Odds (Mercado)")
+                    st.markdown("#### 🏦 Odds")
                     if jogo_odds:
                         bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] == 'pinnacle'), None)
                         if not bookie: bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] in ['bet365', 'onexbet']), None)
@@ -286,16 +316,12 @@ with tab1:
                             c3.metric("Fora", a)
                             
                             if h and d and a:
-                                # --- AQUI ESTÁ A MUDANÇA: MOSTRANDO VISUALMENTE A CHANCE DUPLA ---
                                 dc_1x, dc_x2, dc_12 = calcular_odds_chance_dupla(h, d, a)
-                                
                                 st.markdown("**Dupla Chance (Calc.)**")
                                 c4, c5, c6 = st.columns(3)
                                 c4.metric("1X", f"{dc_1x:.2f}")
                                 c5.metric("X2", f"{dc_x2:.2f}")
                                 c6.metric("12", f"{dc_12:.2f}")
-                                # -----------------------------------------------------------------
-                                
                                 odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
                         else:
                             st.warning("Sem odds na região.")
@@ -306,7 +332,7 @@ with tab1:
                         a = st.number_input("Fora", 1.0, key=f"a{i}")
                         odds_reais = {'vitoria_casa':h, 'empate':d, 'vitoria_visitante':a}
 
-                # --- COLUNA 2: ESTATÍSTICA ---
+                # --- COLUNA 2: ESTATÍSTICA (COM SAVE ROBUSTO) ---
                 with col_res2:
                     st.markdown("#### 🧠 Análise")
                     
@@ -349,10 +375,14 @@ with tab1:
                                         msg_telegram += f"✅ <b>{nome}</b>: Odd {odd:.2f} (EV +{ev:.1f}%)\n"
                                         tem_valor = True
                                         
+                                        # SAVE NO DB (DEBUG ATIVADO)
                                         if f"salvo_{key_analise}_{ch}" not in st.session_state:
-                                            db = conectar_ao_banco_de_dados()
-                                            salvar_analise_no_banco(db, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
-                                            st.session_state[f"salvo_{key_analise}_{ch}"] = True
+                                            if db_sheet:
+                                                salvou = salvar_analise_no_banco(db_sheet, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
+                                                if salvou:
+                                                    st.session_state[f"salvo_{key_analise}_{ch}"] = True
+                                            else:
+                                                st.error("Não salvou: DB Desconectado")
 
                                     elif ev > 0: delta = f"+{ev:.1f}%"
                                     else: 
@@ -366,17 +396,18 @@ with tab1:
                                 if st.button("Enviar Telegram 📱", key=f"btn_env_{i}"):
                                     enviar_telegram(msg_telegram)
                             else:
-                                if st.button("Forçar Telegram (Teste)", key=f"btn_force_{i}"):
+                                if st.button("Forçar Telegram", key=f"btn_force_{i}"):
                                     enviar_telegram(msg_telegram + "\n(Envio Forçado)")
                         else:
-                            st.error("Erro no cálculo.")
+                            st.error("Erro no cálculo estatístico.")
 
 with tab2:
     st.header("Histórico")
-    db = conectar_ao_banco_de_dados()
-    if db:
-        df, g, r = carregar_historico_do_banco(db)
+    if db_sheet:
+        df, g, r = carregar_historico_do_banco(db_sheet)
         c1, c2 = st.columns(2)
-        c1.metric("Greens", g)
-        c2.metric("Reds", r)
+        c1.metric("Greens ✅", g)
+        c2.metric("Reds ❌", r)
         st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("⚠️ Banco de dados desconectado. Verifique os Secrets.")
