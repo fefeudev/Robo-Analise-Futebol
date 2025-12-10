@@ -1,5 +1,5 @@
 # app.py
-# Versão 8.7 - CLEAN + CORREÇÃO TELEGRAM
+# Versão 8.8 - CLEAN + DIAGNÓSTICO DE TELEGRAM
 
 import streamlit as st
 import requests
@@ -33,6 +33,34 @@ st.markdown("""
     [data-testid="stMetricValue"] { color: #E6EDF3; }
 </style>
 """, unsafe_allow_html=True)
+
+# ==============================================================================
+# 📨 TELEGRAM (COM DIAGNÓSTICO DETALHADO)
+# ==============================================================================
+def enviar_telegram(msg):
+    # 1. Tenta pegar as chaves (Debug: Imprime erro na tela se faltar)
+    try:
+        token = st.secrets["TELEGRAM_TOKEN"]
+        chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+    except KeyError as e:
+        st.error(f"❌ ERRO CRÍTICO: Chave '{e}' não encontrada nos Secrets! Configure no painel do Streamlit.")
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    params = {'chat_id': chat_id, 'text': msg, 'parse_mode': 'HTML'}
+    
+    try:
+        r = requests.get(url, params=params, timeout=5)
+        if r.status_code == 200:
+            st.toast("Mensagem enviada com sucesso!", icon="✅")
+            return True
+        else:
+            # Mostra o erro exato que o Telegram devolveu
+            st.error(f"❌ Falha Telegram ({r.status_code}): {r.text}")
+            return False
+    except Exception as e:
+        st.error(f"❌ Erro de Conexão: {e}")
+        return False
 
 # ==============================================================================
 # 🌐 INTEGRAÇÃO COM THE ODDS API
@@ -90,7 +118,7 @@ def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
     return 0, 0, 0
 
 # ==============================================================================
-# 🧠 BANCO DE DADOS
+# 🧠 FUNÇÕES DO BANCO DE DADOS & UTILITÁRIOS
 # ==============================================================================
 
 @st.cache_resource 
@@ -127,9 +155,20 @@ def carregar_historico_do_banco(_sheet):
         return df, greens, reds
     except: return pd.DataFrame(), 0, 0
 
-# ==============================================================================
-# 🧠 CÉREBRO DIXON-COLES
-# ==============================================================================
+@st.cache_data 
+def criar_headers_api():
+    try: return {"X-Auth-Token": st.secrets["THE_ODDS_API_KEY"]} 
+    except: return {}
+
+def fazer_requisicao_api(endpoint, params):
+    try:
+        # Tenta pegar a chave do football-data se existir, senao vai sem
+        headers = {}
+        if "FOOTBALL_DATA_KEY" in st.secrets:
+             headers = {"X-Auth-Token": st.secrets["FOOTBALL_DATA_KEY"]}
+        
+        return requests.get("https://api.football-data.org/v4/" + endpoint, headers=headers, params=params).json()
+    except: return None
 
 @st.cache_data
 def carregar_cerebro_dixon_coles(id_liga):
@@ -173,51 +212,11 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         return res, (l, m)
     except: return None, None
 
-@st.cache_data 
-def criar_headers_api():
-    # Tenta pegar do secrets, se não tiver, retorna vazio (mas não quebra)
-    try: return {"X-Auth-Token": st.secrets["THE_ODDS_API_KEY"]} # Placeholder, se usar football-data
-    except: return {}
-
-def fazer_requisicao_api(endpoint, params):
-    # Nota: Se você usar a API football-data.org, precisa da chave dela no secrets também
-    # Aqui estou usando um fallback seguro
-    try:
-        # Ajuste conforme sua config original de API de futebol
-        url_base = "https://api.football-data.org/v4/" 
-        headers = {"X-Auth-Token": st.secrets.get("FOOTBALL_DATA_KEY", "")}
-        return requests.get(url_base + endpoint, headers=headers, params=params).json()
-    except: return None
-
 @st.cache_data
 def buscar_jogos_por_data(id_liga, data_str):
     d = fazer_requisicao_api(f"competitions/{id_liga}/matches", {"dateFrom": data_str, "dateTo": data_str})
     if not d or 'matches' not in d: return []
     return [{'time_casa': m['homeTeam']['name'], 'time_visitante': m['awayTeam']['name'], 'data': m['utcDate']} for m in d['matches']]
-
-# ==============================================================================
-# 📨 TELEGRAM (CORRIGIDO)
-# ==============================================================================
-def enviar_telegram(msg):
-    # Tenta pegar as chaves do Secrets
-    token = st.secrets.get("TELEGRAM_TOKEN")
-    chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
-
-    if not token or not chat_id:
-        st.error("❌ Erro: Token ou Chat ID do Telegram não configurados no secrets.toml")
-        return
-
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    params = {'chat_id': chat_id, 'text': msg, 'parse_mode': 'HTML'}
-    
-    try:
-        response = requests.get(url, params=params, timeout=5)
-        if response.status_code == 200:
-            st.toast("Enviado ao Telegram!", icon="✅")
-        else:
-            st.error(f"❌ Falha no envio: {response.text}")
-    except Exception as e:
-        st.error(f"❌ Erro de conexão com Telegram: {e}")
 
 # ==============================================================================
 # 🖥️ INTERFACE (STREAMLIT)
@@ -239,6 +238,12 @@ with st.sidebar:
 
     st.divider()
     prob_min = st.slider("Probabilidade Mínima %", 50, 90, 60) / 100
+    
+    # --- NOVO: BOTÃO DE DIAGNÓSTICO DO TELEGRAM ---
+    st.divider()
+    st.subheader("🛠️ Diagnóstico Telegram")
+    if st.button("Enviar Msg de Teste 📨"):
+        enviar_telegram("🤖 <b>Teste do Robô:</b> Conexão estabelecida com sucesso!")
 
 # --- CARREGA CÉREBRO ---
 dados_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
@@ -252,7 +257,7 @@ with tab1:
     jogos = buscar_jogos_por_data(LIGA_ATUAL, data_sel.strftime('%Y-%m-%d'))
     
     if not jogos:
-        st.warning("Nenhum jogo encontrado nesta data. (Verifique se a API de Futebol está respondendo)")
+        st.warning("Nenhum jogo encontrado nesta data. (Se estiver vazio, a API Football Data pode estar sem jogos hoje)")
     else:
         odds_api = buscar_odds_mercado(LIGA_ATUAL)
         
@@ -268,14 +273,11 @@ with tab1:
                 with col_res1:
                     st.markdown("#### 🏦 Odds (Mercado)")
                     if jogo_odds:
-                        # Prioridade: Pinnacle > Bet365 > 1xBet
                         bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] == 'pinnacle'), None)
                         if not bookie: bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] in ['bet365', 'onexbet']), None)
                         
                         if bookie:
                             st.caption(f"Fonte: {bookie['title']}")
-                            
-                            # --- 1. VENCEDOR (1x2) ---
                             outs_h2h = next((m['outcomes'] for m in bookie['markets'] if m['key'] == 'h2h'), [])
                             dict_h2h = {o['name']: o['price'] for o in outs_h2h}
                             
@@ -288,7 +290,6 @@ with tab1:
                             c2.metric("Emp", d)
                             c3.metric("Fora", a)
                             
-                            # --- 2. CHANCE DUPLA CALCULADA ---
                             if h and d and a:
                                 dc_1x, dc_x2, dc_12 = calcular_odds_chance_dupla(h, d, a)
                                 st.markdown("**Dupla Chance (Calc.)**")
@@ -296,7 +297,6 @@ with tab1:
                                 c4.metric("1X", f"{dc_1x:.2f}")
                                 c5.metric("X2", f"{dc_x2:.2f}")
                                 c6.metric("12", f"{dc_12:.2f}")
-                                
                                 odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
                         else:
                             st.warning("Odds indisponíveis na região.")
@@ -355,7 +355,7 @@ with tab1:
                                 if st.button("Enviar Telegram 📱", key=f"tg{i}"):
                                     enviar_telegram(msg_telegram)
                             else:
-                                if st.button("Forçar Envio Telegram", key=f"ftg{i}"): # Botão extra para teste
+                                if st.button("Forçar Envio Telegram", key=f"ftg{i}"):
                                     enviar_telegram(msg_telegram + "\n(Envio Forçado)")
                         else:
                             st.error("Sem dados estatísticos para este jogo.")
