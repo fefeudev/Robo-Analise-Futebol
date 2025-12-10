@@ -1,5 +1,5 @@
 # app.py
-# Versão 8.5 - SUPER HÍBRIDO + MULTI-LINES (0.5 a 4.5 Gols + Handicaps)
+# Versão 8.6 - CLEAN (Apenas H2H + Chance Dupla Calculada)
 
 import streamlit as st
 import requests
@@ -12,15 +12,14 @@ from datetime import datetime, timedelta
 import json
 from difflib import get_close_matches
 
-# --- NOVOS IMPORTS DO BANCO DE DADOS ---
+# --- IMPORTS DO BANCO DE DADOS ---
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-# -------------------------------------
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Robô Híbrido Elite",
-    page_icon="🤖", 
+    page_title="Robô Híbrido Clean",
+    page_icon="🎯", 
     layout="wide"
 )
 
@@ -33,7 +32,6 @@ st.markdown("""
     [data-testid="stMetric"] { background-color: #21262D; border: 1px solid #30363D; border-radius: 8px; padding: 10px; }
     [data-testid="stMetricLabel"] { color: #8B949E; }
     [data-testid="stMetricValue"] { color: #E6EDF3; }
-    div[data-testid="column"] { background-color: rgba(255,255,255,0.02); border-radius: 10px; padding: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -63,9 +61,9 @@ def buscar_odds_mercado(codigo_liga_app):
     sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_app)
     if not sport_key: return None
     
-    # ATUALIZADO: Pedindo Vencedor, Totais (Gols) e Spreads (Handicap)
+    # LIMPEZA: Pedindo APENAS 'h2h' (Vencedor)
     url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
-    params = {'apiKey': api_key, 'regions': 'eu,uk', 'markets': 'h2h,totals,spreads', 'oddsFormat': 'decimal'}
+    params = {'apiKey': api_key, 'regions': 'eu,uk', 'markets': 'h2h', 'oddsFormat': 'decimal'}
     
     try:
         r = requests.get(url, params=params, timeout=5)
@@ -84,16 +82,18 @@ def encontrar_jogo_fuzzy(lista_odds, time_casa_robo, time_fora_robo):
     return None
 
 def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
+    """Calcula matematicamente a odd da Chance Dupla baseada nas odds 1x2"""
     try:
-        odd_1x = (odd_1 * odd_x) / (odd_1 + odd_x)
-        odd_x2 = (odd_x * odd_2) / (odd_x + odd_2)
-        odd_12 = (odd_1 * odd_2) / (odd_1 + odd_2)
-        return odd_1x, odd_x2, odd_12
-    except:
-        return 0, 0, 0
+        if odd_1 > 0 and odd_x > 0 and odd_2 > 0:
+            odd_1x = (odd_1 * odd_x) / (odd_1 + odd_x)
+            odd_x2 = (odd_x * odd_2) / (odd_x + odd_2)
+            odd_12 = (odd_1 * odd_2) / (odd_1 + odd_2)
+            return odd_1x, odd_x2, odd_12
+    except: pass
+    return 0, 0, 0
 
 # ==============================================================================
-# 🧠 FUNÇÕES DO BANCO DE DADOS & CÉREBRO (MANTIDAS)
+# 🧠 FUNÇÕES DO BANCO DE DADOS & UTILITÁRIOS
 # ==============================================================================
 
 @st.cache_resource 
@@ -130,13 +130,6 @@ def carregar_historico_do_banco(_sheet):
         return df, greens, reds
     except: return pd.DataFrame(), 0, 0
 
-def atualizar_status_no_banco(sheet, row_index, novo_status):
-    try:
-        sheet.update_cell(row_index + 2, 8, novo_status)
-        st.cache_data.clear()
-        st.rerun()
-    except: pass
-
 @st.cache_data 
 def criar_headers_api(): return {"X-Auth-Token": config.API_KEY}
 
@@ -144,6 +137,10 @@ def fazer_requisicao_api(endpoint, params):
     try:
         return requests.get(config.API_BASE_URL + endpoint, headers=criar_headers_api(), params=params).json()
     except: return None
+
+# ==============================================================================
+# 🧠 CÉREBRO DIXON-COLES
+# ==============================================================================
 
 @st.cache_data
 def carregar_cerebro_dixon_coles(id_liga):
@@ -178,51 +175,14 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         draw = np.sum(np.diag(probs))
         away = np.sum(np.triu(probs, 1))
         
-        # PROBABILIDADES DE GOLS (0.5 a 4.5)
-        # Soma todos os placares onde (i+j) > Linha
-        prob_over05 = 1 - probs[0,0]
-        prob_over15 = 1 - (probs[0,0] + probs[1,0] + probs[0,1])
-        prob_over25 = np.sum(probs) - (probs[0,0]+probs[1,0]+probs[0,1]+probs[2,0]+probs[0,2]+probs[1,1])
-        # Aproximação para 3.5 e 4.5 (soma placares baixos e subtrai de 1)
-        placares_under35 = [(0,0),(1,0),(0,1),(2,0),(0,2),(1,1),(3,0),(0,3),(2,1),(1,2)]
-        prob_under35 = sum(probs[i,j] for i,j in placares_under35 if i<7 and j<7)
-        prob_over35 = 1 - prob_under35
-
-        btts = 1 - (np.sum(probs[0,:]) + np.sum(probs[:,0]) - probs[0,0])
-        
         total = home+draw+away
+        
+        # LIMPEZA: Retornando apenas H2H e Chance Dupla
         res = {
             'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
-            'over_0_5': prob_over05/total, 'over_1_5': prob_over15/total,
-            'over_2_5': prob_over25/total, 'over_3_5': prob_over35/total,
-            'btts_sim': btts/total,
             'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total
         }
         return res, (l, m)
-    except: return None, None
-
-def prever_jogo_poisson(forcas, medias, t1, t2):
-    try:
-        fa_c = forcas[t1]['atk']/medias['mc']
-        fd_c = forcas[t1]['def']/medias['mv']
-        fa_v = forcas[t2]['atk']/medias['mv']
-        fd_v = forcas[t2]['def']/medias['mc']
-        l = fa_c * fd_v * medias['mc']
-        m = fa_v * fd_c * medias['mv']
-        
-        probs = np.outer([stats.poisson.pmf(i,l) for i in range(7)], [stats.poisson.pmf(j,m) for j in range(7)])
-        home = np.sum(np.tril(probs, -1))
-        draw = np.sum(np.diag(probs))
-        away = np.sum(np.triu(probs, 1))
-        
-        total = home+draw+away
-        if total == 0: return None, None
-        
-        return {
-            'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
-            'over_2_5': 0.5, 'btts_sim': 0.5, 
-            'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total
-        }, (l, m)
     except: return None, None
 
 @st.cache_data
@@ -246,7 +206,7 @@ LIGAS = {"Champions League": "CL", "Premier League": "PL", "Brasileirão": "BSA"
 EMOJIS = {"CL": "🇪🇺", "PL": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "BSA": "🇧🇷", "PD": "🇪🇸", "SA": "🇮🇹", "BL1": "🇩🇪"}
 
 with st.sidebar:
-    st.title("🤖 Robô Elite 8.5")
+    st.title("🎯 Robô H2H + DC")
     l_nome = st.selectbox("Liga:", LIGAS.keys())
     LIGA_ATUAL = LIGAS[l_nome]
     
@@ -263,7 +223,7 @@ with st.sidebar:
 dados_dc = carregar_cerebro_dixon_coles(LIGA_ATUAL)
 
 # --- TABS ---
-tab1, tab2 = st.tabs(["📊 Analisar Jogos", "📈 Histórico"])
+tab1, tab2 = st.tabs(["📊 Jogos (H2H + DC)", "📈 Histórico"])
 
 with tab1:
     st.header(f"{EMOJIS.get(LIGA_ATUAL,'')} Jogos: {data_sel.strftime('%d/%m/%Y')}")
@@ -283,10 +243,9 @@ with tab1:
                 col_res1, col_res2 = st.columns([1.2, 1.8])
                 
                 odds_reais = {}
-                handicaps = []
                 
                 with col_res1:
-                    st.markdown("#### 🏦 Mercado (Odds)")
+                    st.markdown("#### 🏦 Odds (Mercado)")
                     if jogo_odds:
                         # Prioridade: Pinnacle > Bet365 > 1xBet
                         bookie = next((b for b in jogo_odds['bookmakers'] if b['key'] == 'pinnacle'), None)
@@ -308,32 +267,16 @@ with tab1:
                             c2.metric("Emp", d)
                             c3.metric("Fora", a)
                             
+                            # --- 2. CHANCE DUPLA CALCULADA ---
                             if h and d and a:
                                 dc_1x, dc_x2, dc_12 = calcular_odds_chance_dupla(h, d, a)
-                                odds_reais.update({'vitoria_casa':h, 'empate':d, 'vitoria_visitante':a, 'chance_dupla_1X':dc_1x, 'chance_dupla_X2':dc_x2, 'chance_dupla_12':dc_12})
-                            
-                            # --- 2. GOLS (TOTALS) - Captura Multi-Linhas ---
-                            outs_tot = next((m['outcomes'] for m in bookie['markets'] if m['key'] == 'totals'), [])
-                            
-                            # Dicionário para guardar as linhas que encontrarmos
-                            linhas_gols = {0.5: None, 1.5: None, 2.5: None, 3.5: None, 4.5: None}
-                            
-                            for o in outs_tot:
-                                if o['name'] == 'Over' and o['point'] in linhas_gols:
-                                    linhas_gols[o['point']] = o['price']
-                                    # Mapeia para o nome usado no robô estatístico
-                                    key_robo = f"over_{str(o['point']).replace('.','_')}"
-                                    odds_reais[key_robo] = o['price']
-                            
-                            # --- 3. HANDICAPS (SPREADS) ---
-                            outs_spr = next((m['outcomes'] for m in bookie['markets'] if m['key'] == 'spreads'), [])
-                            if outs_spr:
-                                # Pega a primeira linha de handicap disponível para exibição
-                                line = outs_spr[0].get('point')
-                                price = outs_spr[0].get('price')
-                                nome = outs_spr[0].get('name')
-                                handicaps.append(f"{nome} ({line}): {price}")
-
+                                st.markdown("**Dupla Chance (Calc.)**")
+                                c4, c5, c6 = st.columns(3)
+                                c4.metric("1X", f"{dc_1x:.2f}")
+                                c5.metric("X2", f"{dc_x2:.2f}")
+                                c6.metric("12", f"{dc_12:.2f}")
+                                
+                                odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
                         else:
                             st.warning("Odds indisponíveis na região.")
                     else:
@@ -349,86 +292,45 @@ with tab1:
                         res, xg = prever_jogo_dixon_coles(dados_dc, jogo['time_casa'], jogo['time_visitante'])
                         
                         if res:
-                            # TABS PARA ORGANIZAR RESULTADOS
-                            t_res, t_gols = st.tabs(["Principal (1x2)", "Gols & Linhas"])
-                            
                             msg_telegram = f"🔥 <b>{LIGA_ATUAL}</b>: {jogo['time_casa']} x {jogo['time_visitante']}\n\n"
                             tem_valor = False
                             
-                            # --- TAB 1: 1x2 e Dupla Chance ---
-                            with t_res:
-                                col_p1, col_p2, col_p3 = st.columns(3)
-                                # Lista: (Chave_Robo, Nome_Display, Coluna)
-                                principais = [
-                                    ('vitoria_casa', 'Casa', 0), ('empate', 'Empate', 1), ('vitoria_visitante', 'Fora', 2),
-                                    ('chance_dupla_1X', 'DC 1X', 0), ('chance_dupla_X2', 'DC X2', 2), ('chance_dupla_12', 'DC 12', 1)
-                                ]
-                                for ch, nome, c_idx in principais:
-                                    prob = res.get(ch, 0)*100
-                                    odd = odds_reais.get(ch, 0)
-                                    delta = ""
-                                    color = "off"
-                                    
-                                    if odd > 1:
-                                        justa = 100/prob if prob > 0 else 99
-                                        ev = ((odd/justa)-1)*100
-                                        if ev > 3.0 and prob > (prob_min*100):
-                                            delta = f"+{ev:.1f}% EV"
-                                            color = "normal"
-                                            msg_telegram += f"✅ <b>{nome}</b>: Odd {odd:.2f} (EV +{ev:.1f}%)\n"
-                                            tem_valor = True
-                                        elif ev > 0: delta = f"+{ev:.1f}%"
-                                        else: 
-                                            delta = f"{ev:.1f}%"
-                                            color = "inverse"
-                                    
-                                    if c_idx==0: col_p1.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
-                                    elif c_idx==1: col_p2.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
-                                    else: col_p3.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
-
-                            # --- TAB 2: GOLS (0.5 a 3.5) ---
-                            with t_gols:
-                                st.caption("Probabilidades de Over Gols vs Odds Disponíveis")
-                                cg1, cg2, cg3, cg4 = st.columns(4)
+                            st.caption("Comparação: Odd do Mercado vs Odd Justa do Robô")
+                            col_p1, col_p2, col_p3 = st.columns(3)
+                            
+                            # Lista Exclusiva: H2H e Chance Dupla
+                            mercados_analise = [
+                                ('vitoria_casa', 'Casa', 0), ('empate', 'Empate', 1), ('vitoria_visitante', 'Fora', 2),
+                                ('chance_dupla_1X', 'DC 1X', 0), ('chance_dupla_X2', 'DC X2', 2), ('chance_dupla_12', 'DC 12', 1)
+                            ]
+                            
+                            for ch, nome, c_idx in mercados_analise:
+                                prob = res.get(ch, 0)*100
+                                odd = odds_reais.get(ch, 0)
+                                delta = ""
+                                color = "off"
                                 
-                                # Lista de Gols para iterar
-                                lista_gols = [
-                                    ('over_0_5', 'Over 0.5', 0.5, cg1),
-                                    ('over_1_5', 'Over 1.5', 1.5, cg2),
-                                    ('over_2_5', 'Over 2.5', 2.5, cg3),
-                                    ('over_3_5', 'Over 3.5', 3.5, cg4)
-                                ]
+                                if odd > 1:
+                                    justa = 100/prob if prob > 0 else 99
+                                    ev = ((odd/justa)-1)*100
+                                    
+                                    if ev > 3.0 and prob > (prob_min*100):
+                                        delta = f"+{ev:.1f}% EV"
+                                        color = "normal"
+                                        msg_telegram += f"✅ <b>{nome}</b>: Odd {odd:.2f} (EV +{ev:.1f}%)\n"
+                                        tem_valor = True
+                                        
+                                        # Salva no Banco
+                                        db = conectar_ao_banco_de_dados()
+                                        salvar_analise_no_banco(db, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
+                                    elif ev > 0: delta = f"+{ev:.1f}%"
+                                    else: 
+                                        delta = f"{ev:.1f}%"
+                                        color = "inverse"
                                 
-                                for chave, nome, ponto, col in lista_gols:
-                                    prob = res.get(chave, 0)*100
-                                    # Tenta pegar a odd exata daquele ponto (ex: 1.5)
-                                    odd = odds_reais.get(chave, 0) 
-                                    
-                                    delta = ""
-                                    color = "off"
-                                    val_display = f"{prob:.1f}%"
-                                    
-                                    if odd > 1:
-                                        val_display = f"{prob:.1f}% (@{odd})"
-                                        justa = 100/prob if prob > 0 else 99
-                                        ev = ((odd/justa)-1)*100
-                                        if ev > 2.0:
-                                            delta = f"+{ev:.1f}% EV"
-                                            color = "normal"
-                                            msg_telegram += f"⚽ <b>{nome}</b>: Odd {odd:.2f} (EV +{ev:.1f}%)\n"
-                                            tem_valor = True
-                                        else:
-                                            delta = f"{ev:.1f}%"
-                                            color = "inverse"
-                                    elif 'linhas_gols' in locals() and linhas_gols.get(ponto) is None:
-                                        # Se a API não mandou essa linha
-                                        delta = "Sem Odd"
-                                    
-                                    col.metric(nome, val_display, delta, delta_color=color)
-                                
-                                if handicaps:
-                                    st.divider()
-                                    st.markdown(f"**Handicaps Disponíveis:** {', '.join(handicaps)}")
+                                if c_idx==0: col_p1.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
+                                elif c_idx==1: col_p2.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
+                                else: col_p3.metric(nome, f"{prob:.1f}%", delta, delta_color=color)
 
                             if tem_valor:
                                 if st.button("Enviar Telegram 📱", key=f"tg{i}"):
