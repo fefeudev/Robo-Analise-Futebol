@@ -1,12 +1,11 @@
 # app.py
-# Versão 8.6 - CLEAN (Apenas H2H + Chance Dupla Calculada)
+# Versão 8.7 - CLEAN + CORREÇÃO TELEGRAM
 
 import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
 import scipy.stats as stats 
-import config 
 import time
 from datetime import datetime, timedelta
 import json
@@ -61,7 +60,6 @@ def buscar_odds_mercado(codigo_liga_app):
     sport_key = MAPA_LIGAS_ODDS.get(codigo_liga_app)
     if not sport_key: return None
     
-    # LIMPEZA: Pedindo APENAS 'h2h' (Vencedor)
     url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
     params = {'apiKey': api_key, 'regions': 'eu,uk', 'markets': 'h2h', 'oddsFormat': 'decimal'}
     
@@ -82,7 +80,6 @@ def encontrar_jogo_fuzzy(lista_odds, time_casa_robo, time_fora_robo):
     return None
 
 def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
-    """Calcula matematicamente a odd da Chance Dupla baseada nas odds 1x2"""
     try:
         if odd_1 > 0 and odd_x > 0 and odd_2 > 0:
             odd_1x = (odd_1 * odd_x) / (odd_1 + odd_x)
@@ -93,7 +90,7 @@ def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
     return 0, 0, 0
 
 # ==============================================================================
-# 🧠 FUNÇÕES DO BANCO DE DADOS & UTILITÁRIOS
+# 🧠 BANCO DE DADOS
 # ==============================================================================
 
 @st.cache_resource 
@@ -129,14 +126,6 @@ def carregar_historico_do_banco(_sheet):
         reds = df['Status'].value_counts().get('Red ❌', 0) if 'Status' in df.columns else 0
         return df, greens, reds
     except: return pd.DataFrame(), 0, 0
-
-@st.cache_data 
-def criar_headers_api(): return {"X-Auth-Token": config.API_KEY}
-
-def fazer_requisicao_api(endpoint, params):
-    try:
-        return requests.get(config.API_BASE_URL + endpoint, headers=criar_headers_api(), params=params).json()
-    except: return None
 
 # ==============================================================================
 # 🧠 CÉREBRO DIXON-COLES
@@ -177,7 +166,6 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         
         total = home+draw+away
         
-        # LIMPEZA: Retornando apenas H2H e Chance Dupla
         res = {
             'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
             'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total
@@ -185,18 +173,51 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         return res, (l, m)
     except: return None, None
 
+@st.cache_data 
+def criar_headers_api():
+    # Tenta pegar do secrets, se não tiver, retorna vazio (mas não quebra)
+    try: return {"X-Auth-Token": st.secrets["THE_ODDS_API_KEY"]} # Placeholder, se usar football-data
+    except: return {}
+
+def fazer_requisicao_api(endpoint, params):
+    # Nota: Se você usar a API football-data.org, precisa da chave dela no secrets também
+    # Aqui estou usando um fallback seguro
+    try:
+        # Ajuste conforme sua config original de API de futebol
+        url_base = "https://api.football-data.org/v4/" 
+        headers = {"X-Auth-Token": st.secrets.get("FOOTBALL_DATA_KEY", "")}
+        return requests.get(url_base + endpoint, headers=headers, params=params).json()
+    except: return None
+
 @st.cache_data
 def buscar_jogos_por_data(id_liga, data_str):
     d = fazer_requisicao_api(f"competitions/{id_liga}/matches", {"dateFrom": data_str, "dateTo": data_str})
     if not d or 'matches' not in d: return []
     return [{'time_casa': m['homeTeam']['name'], 'time_visitante': m['awayTeam']['name'], 'data': m['utcDate']} for m in d['matches']]
 
+# ==============================================================================
+# 📨 TELEGRAM (CORRIGIDO)
+# ==============================================================================
 def enviar_telegram(msg):
+    # Tenta pegar as chaves do Secrets
+    token = st.secrets.get("TELEGRAM_TOKEN")
+    chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+
+    if not token or not chat_id:
+        st.error("❌ Erro: Token ou Chat ID do Telegram não configurados no secrets.toml")
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    params = {'chat_id': chat_id, 'text': msg, 'parse_mode': 'HTML'}
+    
     try:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
-        requests.get(url, params={'chat_id': config.TELEGRAM_CHAT_ID, 'text': msg, 'parse_mode': 'HTML'})
-        st.toast("Enviado ao Telegram!", icon="✅")
-    except: pass
+        response = requests.get(url, params=params, timeout=5)
+        if response.status_code == 200:
+            st.toast("Enviado ao Telegram!", icon="✅")
+        else:
+            st.error(f"❌ Falha no envio: {response.text}")
+    except Exception as e:
+        st.error(f"❌ Erro de conexão com Telegram: {e}")
 
 # ==============================================================================
 # 🖥️ INTERFACE (STREAMLIT)
@@ -231,7 +252,7 @@ with tab1:
     jogos = buscar_jogos_por_data(LIGA_ATUAL, data_sel.strftime('%Y-%m-%d'))
     
     if not jogos:
-        st.warning("Nenhum jogo encontrado nesta data.")
+        st.warning("Nenhum jogo encontrado nesta data. (Verifique se a API de Futebol está respondendo)")
     else:
         odds_api = buscar_odds_mercado(LIGA_ATUAL)
         
@@ -298,7 +319,6 @@ with tab1:
                             st.caption("Comparação: Odd do Mercado vs Odd Justa do Robô")
                             col_p1, col_p2, col_p3 = st.columns(3)
                             
-                            # Lista Exclusiva: H2H e Chance Dupla
                             mercados_analise = [
                                 ('vitoria_casa', 'Casa', 0), ('empate', 'Empate', 1), ('vitoria_visitante', 'Fora', 2),
                                 ('chance_dupla_1X', 'DC 1X', 0), ('chance_dupla_X2', 'DC X2', 2), ('chance_dupla_12', 'DC 12', 1)
@@ -320,7 +340,6 @@ with tab1:
                                         msg_telegram += f"✅ <b>{nome}</b>: Odd {odd:.2f} (EV +{ev:.1f}%)\n"
                                         tem_valor = True
                                         
-                                        # Salva no Banco
                                         db = conectar_ao_banco_de_dados()
                                         salvar_analise_no_banco(db, data_sel.strftime('%Y-%m-%d'), LIGA_ATUAL, f"{jogo['time_casa']}x{jogo['time_visitante']}", nome, odd, prob, ev)
                                     elif ev > 0: delta = f"+{ev:.1f}%"
@@ -335,6 +354,9 @@ with tab1:
                             if tem_valor:
                                 if st.button("Enviar Telegram 📱", key=f"tg{i}"):
                                     enviar_telegram(msg_telegram)
+                            else:
+                                if st.button("Forçar Envio Telegram", key=f"ftg{i}"): # Botão extra para teste
+                                    enviar_telegram(msg_telegram + "\n(Envio Forçado)")
                         else:
                             st.error("Sem dados estatísticos para este jogo.")
 
