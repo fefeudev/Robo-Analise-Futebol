@@ -1,5 +1,5 @@
 # app.py
-# Versão 9.9 - FINAL (Restaurado: Botões de Green/Red no Histórico)
+# Versão 10.0 - FINAL (Menu Ajustado: 9 Ligas Exatas)
 
 import streamlit as st
 import requests
@@ -63,18 +63,14 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
         except: return False
     return False
 
-# --- FUNÇÃO READICIONADA: ATUALIZAR STATUS ---
+# --- FUNÇÃO DE STATUS ---
 def atualizar_status_no_banco(sheet, row_index, novo_status):
     try:
-        # row_index vem do dataframe (0, 1, 2...). No Sheets, linha 1 é header.
-        # Logo, o dado 0 está na linha 2.
-        # A Coluna "Status" é a 8ª coluna (H).
         sheet.update_cell(row_index + 2, 8, novo_status)
-        st.cache_data.clear() # Limpa o cache para ver a mudança na hora
+        st.cache_data.clear()
         st.rerun()
     except Exception as e:
         st.error(f"Erro ao atualizar: {e}")
-# ---------------------------------------------
 
 @st.cache_data(ttl=10)
 def carregar_historico_do_banco(_sheet):
@@ -119,8 +115,7 @@ MAPA_LIGAS_ODDS = {
     "BL1": "soccer_germany_bundesliga",
     "FL1": "soccer_france_ligue_one",
     "BSA": "soccer_brazil_campeonato",
-    "PPL": "soccer_portugal_primeira_liga",
-    "DED": "soccer_netherlands_eredivisie"
+    "PPL": "soccer_portugal_primeira_liga"
 }
 
 @st.cache_data(ttl=3600)
@@ -220,7 +215,6 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         home = np.sum(np.tril(probs, -1))
         draw = np.sum(np.diag(probs))
         away = np.sum(np.triu(probs, 1))
-        total = home+draw+away
         
         res = {
             'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
@@ -230,19 +224,25 @@ def prever_jogo_dixon_coles(dados, t1, t2):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# 🖥️ INTERFACE
+# 🖥️ INTERFACE (AS 9 LIGAS)
 # ==============================================================================
 
 LIGAS = {
+    "Brasileirão": "BSA",
     "Champions League": "CL", 
     "Premier League": "PL", 
     "Championship": "ELC", 
-    "Brasileirão": "BSA", 
     "La Liga": "PD", 
     "Serie A": "SA", 
-    "Bundesliga": "BL1"
+    "Bundesliga": "BL1",
+    "Ligue 1": "FL1",
+    "Primeira Liga": "PPL"
 }
-EMOJIS = {"CL": "🇪🇺", "PL": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "ELC": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "BSA": "🇧🇷", "PD": "🇪🇸", "SA": "🇮🇹", "BL1": "🇩🇪"}
+
+EMOJIS = {
+    "BSA": "🇧🇷", "CL": "🇪🇺", "PL": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "ELC": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", 
+    "PD": "🇪🇸", "SA": "🇮🇹", "BL1": "🇩🇪", "FL1": "🇫🇷", "PPL": "🇵🇹"
+}
 
 db_sheet = conectar_ao_banco_de_dados()
 
@@ -311,7 +311,7 @@ with tab1:
                             c5.metric("X2", f"{dc_x2:.2f}")
                             c6.metric("12", f"{dc_12:.2f}")
                             odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
-                    else: st.warning("Odds indisponíveis na região.")
+                    else: st.warning("Odds indisponíveis.")
 
                 with col_res2:
                     st.markdown("#### 🧠 Análise")
@@ -394,40 +394,25 @@ with tab2:
     if db_sheet:
         df, g, r = carregar_historico_do_banco(db_sheet)
         
-        # --- BLOCO READICIONADO: ATUALIZAR STATUS ---
         with st.expander("✏️ Atualizar Status (Green/Red)"):
             if 'Status' in df.columns:
-                # Filtra apenas os pendentes
                 opcoes_pendentes = df[df['Status'] == 'Aguardando ⏳']
+                opcoes_lista = [f"{idx}: {row['Jogo']} ({row['Mercado']}) - {row['Data']}" for idx, row in opcoes_pendentes.iterrows()]
                 
-                # Cria uma lista bonita para o Selectbox
-                # Formato: "Índice: Jogo (Mercado) - Data"
-                opcoes_lista = [
-                    f"{idx}: {row['Jogo']} ({row['Mercado']}) - {row['Data']}" 
-                    for idx, row in opcoes_pendentes.iterrows()
-                ]
-                
-                if not opcoes_lista:
-                    st.info("Nenhuma aposta pendente.")
+                if not opcoes_lista: st.info("Nenhuma aposta pendente.")
                 else:
                     aposta_selecionada = st.selectbox("Selecione a aposta:", opcoes_lista)
-                    
                     col_b1, col_b2 = st.columns(2)
                     if col_b1.button("Green ✅", use_container_width=True):
-                        # Extrai o índice real do dataframe original
                         idx_real = int(aposta_selecionada.split(':')[0])
                         atualizar_status_no_banco(db_sheet, idx_real, "Green ✅")
-                        
                     if col_b2.button("Red ❌", use_container_width=True):
                         idx_real = int(aposta_selecionada.split(':')[0])
                         atualizar_status_no_banco(db_sheet, idx_real, "Red ❌")
-            else:
-                st.warning("Coluna 'Status' não encontrada na planilha.")
-        # --------------------------------------------
+            else: st.warning("Coluna 'Status' não encontrada.")
 
         c1, c2 = st.columns(2)
         c1.metric("Greens ✅", g)
         c2.metric("Reds ❌", r)
         st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("⚠️ Banco de dados desconectado.")
+    else: st.warning("⚠️ Banco de dados desconectado.")
