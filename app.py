@@ -1,5 +1,5 @@
 # app.py
-# Versão 9.8 - FINAL (Correção erro NoneType + Proteção contra Cérebro Vazio)
+# Versão 9.9 - FINAL (Restaurado: Botões de Green/Red no Histórico)
 
 import streamlit as st
 import requests
@@ -62,6 +62,19 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
             return True
         except: return False
     return False
+
+# --- FUNÇÃO READICIONADA: ATUALIZAR STATUS ---
+def atualizar_status_no_banco(sheet, row_index, novo_status):
+    try:
+        # row_index vem do dataframe (0, 1, 2...). No Sheets, linha 1 é header.
+        # Logo, o dado 0 está na linha 2.
+        # A Coluna "Status" é a 8ª coluna (H).
+        sheet.update_cell(row_index + 2, 8, novo_status)
+        st.cache_data.clear() # Limpa o cache para ver a mudança na hora
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erro ao atualizar: {e}")
+# ---------------------------------------------
 
 @st.cache_data(ttl=10)
 def carregar_historico_do_banco(_sheet):
@@ -163,38 +176,27 @@ def calcular_odds_chance_dupla(odd_1, odd_x, odd_2):
     return 0, 0, 0
 
 # ==============================================================================
-# 🧠 CÉREBRO DIXON-COLES (COM PROTEÇÃO CONTRA VAZIO)
+# 🧠 CÉREBRO DIXON-COLES
 # ==============================================================================
 
 @st.cache_data
 def carregar_cerebro_dixon_coles(id_liga):
     try:
-        # Tenta carregar o arquivo
-        with open(f"dc_params_{id_liga}.json", 'r') as f: 
-            return json.load(f)
-    except: 
-        # Se não existir, retorna None
-        return None
+        with open(f"dc_params_{id_liga}.json", 'r') as f: return json.load(f)
+    except: return None
 
 def prever_jogo_dixon_coles(dados, t1, t2):
     try:
-        # PROTEÇÃO 1: Se os dados vierem vazios (None), para aqui.
-        if not dados:
-            return None, "Cérebro não treinado para esta liga. Rode o script de treino."
-
+        if not dados: return None, "Cérebro não treinado."
         f = dados.get('forcas')
-        # PROTEÇÃO 2: Se o JSON estiver corrompido ou sem forças
-        if not f:
-            return None, "Arquivo do Cérebro inválido/vazio."
-
+        if not f: return None, "Arquivo vazio."
         adv = dados.get('vantagem_casa', 0.2)
-        rho = dados.get('rho', 0.0)
         
         t1_real = get_close_matches(t1, f.keys(), n=1, cutoff=0.3)
         t2_real = get_close_matches(t2, f.keys(), n=1, cutoff=0.3)
         
-        if not t1_real: return None, f"Time não encontrado no Cérebro: {t1}"
-        if not t2_real: return None, f"Time não encontrado no Cérebro: {t2}"
+        if not t1_real: return None, f"Time não encontrado: {t1}"
+        if not t2_real: return None, f"Time não encontrado: {t2}"
         
         t1_key = t1_real[0]
         t2_key = t2_real[0]
@@ -213,12 +215,11 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         probs = np.zeros((7,7))
         for i in range(7):
             for j in range(7):
-                probs[i,j] = stats.poisson.pmf(i, l) * stats.poisson.pmf(j, m) * tau(i,j,l,m,rho)
+                probs[i,j] = stats.poisson.pmf(i, l) * stats.poisson.pmf(j, m) * tau(i,j,l,m,0)
         
         home = np.sum(np.tril(probs, -1))
         draw = np.sum(np.diag(probs))
         away = np.sum(np.triu(probs, 1))
-        
         total = home+draw+away
         
         res = {
@@ -272,7 +273,6 @@ tab1, tab2 = st.tabs(["📊 Jogos", "📈 Histórico"])
 
 with tab1:
     st.header(f"{EMOJIS.get(LIGA_ATUAL,'')} Jogos: {data_sel.strftime('%d/%m/%Y')}")
-    
     jogos = buscar_jogos_unificado(LIGA_ATUAL, data_sel)
     
     if not jogos: st.warning("Nenhum jogo encontrado nesta data (ou sem odds abertas).")
@@ -281,11 +281,9 @@ with tab1:
             with st.expander(f"⚽ {jogo['time_casa']} x {jogo['time_visitante']}"):
                 
                 jogo_api_dados = jogo['dados_completos']
-                
                 col_res1, col_res2 = st.columns([1.2, 1.8])
                 odds_reais = {}
                 
-                # --- COLUNA 1: ODDS ---
                 with col_res1:
                     st.markdown("#### 🏦 Odds")
                     bookie = next((b for b in jogo_api_dados['bookmakers'] if b['key'] == 'pinnacle'), None)
@@ -313,21 +311,16 @@ with tab1:
                             c5.metric("X2", f"{dc_x2:.2f}")
                             c6.metric("12", f"{dc_12:.2f}")
                             odds_reais = {'vitoria_casa': h, 'empate': d, 'vitoria_visitante': a, 'chance_dupla_1X': dc_1x, 'chance_dupla_X2': dc_x2, 'chance_dupla_12': dc_12}
-                    else:
-                        st.warning("Odds indisponíveis na região.")
+                    else: st.warning("Odds indisponíveis na região.")
 
-                # --- COLUNA 2: ESTATÍSTICA ---
                 with col_res2:
                     st.markdown("#### 🧠 Análise")
                     key_analise = f"analise_{i}_{jogo['time_casa']}"
                     
                     if st.button("Calcular Probabilidades", key=f"btn_calc_{i}"):
                         res, info_extra = prever_jogo_dixon_coles(dados_dc, jogo['time_casa'], jogo['time_visitante'])
-                        
-                        if res:
-                            st.session_state[key_analise] = {'res': res, 'odds': odds_reais, 'xg': info_extra}
-                        else:
-                            st.error(f"Erro: {info_extra}")
+                        if res: st.session_state[key_analise] = {'res': res, 'odds': odds_reais, 'xg': info_extra}
+                        else: st.error(f"Erro: {info_extra}")
                     
                     if key_analise in st.session_state:
                         dados_salvos = st.session_state[key_analise]
@@ -368,14 +361,12 @@ with tab1:
                                     if ev > 3.0 and prob > (prob_min*100):
                                         delta = f"+{ev:.1f}% EV"
                                         color = "normal"
-                                        
                                         prob_impl = (1/odd)*100
                                         msg_telegram += f"✅ <b>Mercado: {nome}</b>\n"
                                         msg_telegram += f"<code>Odd: {odd:.2f} (Impl: {prob_impl:.1f}%)</code>\n"
                                         msg_telegram += f"<code>Probabilidade: {prob:.2f}%</code>\n"
                                         msg_telegram += f"<b>Valor: +{ev:.2f}%</b>\n"
                                         msg_telegram += "------------------------------\n"
-                                        
                                         tem_valor = True
                                         
                                         if f"salvo_{key_analise}_{ch}" not in st.session_state:
@@ -402,6 +393,38 @@ with tab2:
     st.header("Histórico")
     if db_sheet:
         df, g, r = carregar_historico_do_banco(db_sheet)
+        
+        # --- BLOCO READICIONADO: ATUALIZAR STATUS ---
+        with st.expander("✏️ Atualizar Status (Green/Red)"):
+            if 'Status' in df.columns:
+                # Filtra apenas os pendentes
+                opcoes_pendentes = df[df['Status'] == 'Aguardando ⏳']
+                
+                # Cria uma lista bonita para o Selectbox
+                # Formato: "Índice: Jogo (Mercado) - Data"
+                opcoes_lista = [
+                    f"{idx}: {row['Jogo']} ({row['Mercado']}) - {row['Data']}" 
+                    for idx, row in opcoes_pendentes.iterrows()
+                ]
+                
+                if not opcoes_lista:
+                    st.info("Nenhuma aposta pendente.")
+                else:
+                    aposta_selecionada = st.selectbox("Selecione a aposta:", opcoes_lista)
+                    
+                    col_b1, col_b2 = st.columns(2)
+                    if col_b1.button("Green ✅", use_container_width=True):
+                        # Extrai o índice real do dataframe original
+                        idx_real = int(aposta_selecionada.split(':')[0])
+                        atualizar_status_no_banco(db_sheet, idx_real, "Green ✅")
+                        
+                    if col_b2.button("Red ❌", use_container_width=True):
+                        idx_real = int(aposta_selecionada.split(':')[0])
+                        atualizar_status_no_banco(db_sheet, idx_real, "Red ❌")
+            else:
+                st.warning("Coluna 'Status' não encontrada na planilha.")
+        # --------------------------------------------
+
         c1, c2 = st.columns(2)
         c1.metric("Greens ✅", g)
         c2.metric("Reds ❌", r)
