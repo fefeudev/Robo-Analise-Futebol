@@ -1,5 +1,5 @@
 # app.py
-# Versão 10.1 - FINAL (Remoção total de dependências externas como config.py)
+# Versão 10.0 - CORRIGIDA (Fix: 'total' is not defined)
 
 import streamlit as st
 import requests
@@ -41,7 +41,6 @@ st.markdown("""
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
     try:
-        # Verifica se as credenciais existem no secrets
         if "google_creds" not in st.secrets:
             return None
         creds_dict = dict(st.secrets.google_creds)
@@ -216,6 +215,10 @@ def prever_jogo_dixon_coles(dados, t1, t2):
         draw = np.sum(np.diag(probs))
         away = np.sum(np.triu(probs, 1))
         
+        # --- AQUI ESTAVA O ERRO: FALTAVA DEFINIR 'total' ---
+        total = home + draw + away
+        # ---------------------------------------------------
+        
         res = {
             'vitoria_casa': home/total, 'empate': draw/total, 'vitoria_visitante': away/total,
             'chance_dupla_1X': (home+draw)/total, 'chance_dupla_X2': (draw+away)/total, 'chance_dupla_12': (home+away)/total
@@ -224,7 +227,7 @@ def prever_jogo_dixon_coles(dados, t1, t2):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# 🖥️ INTERFACE
+# 🖥️ INTERFACE (AS 9 LIGAS)
 # ==============================================================================
 
 LIGAS = {
