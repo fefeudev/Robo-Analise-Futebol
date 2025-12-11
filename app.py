@@ -1,5 +1,5 @@
 # app.py
-# Versão 10.0 - FINAL (Menu Ajustado: 9 Ligas Exatas)
+# Versão 10.1 - FINAL (Remoção total de dependências externas como config.py)
 
 import streamlit as st
 import requests
@@ -41,6 +41,7 @@ st.markdown("""
 @st.cache_resource 
 def conectar_ao_banco_de_dados():
     try:
+        # Verifica se as credenciais existem no secrets
         if "google_creds" not in st.secrets:
             return None
         creds_dict = dict(st.secrets.google_creds)
@@ -63,7 +64,6 @@ def salvar_analise_no_banco(sheet, data, liga, jogo, mercado, odd, prob_robo, va
         except: return False
     return False
 
-# --- FUNÇÃO DE STATUS ---
 def atualizar_status_no_banco(sheet, row_index, novo_status):
     try:
         sheet.update_cell(row_index + 2, 8, novo_status)
@@ -224,7 +224,7 @@ def prever_jogo_dixon_coles(dados, t1, t2):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# 🖥️ INTERFACE (AS 9 LIGAS)
+# 🖥️ INTERFACE
 # ==============================================================================
 
 LIGAS = {
@@ -326,7 +326,7 @@ with tab1:
                         dados_salvos = st.session_state[key_analise]
                         res = dados_salvos['res']
                         odds_usadas = dados_salvos['odds']
-                        xg = dados_salvos.get('xg') 
+                        xg = dados_salvos.get('xg')
                         
                         if res:
                             msg_telegram = "<b>TIPS I.A</b>\n"
@@ -393,12 +393,10 @@ with tab2:
     st.header("Histórico")
     if db_sheet:
         df, g, r = carregar_historico_do_banco(db_sheet)
-        
         with st.expander("✏️ Atualizar Status (Green/Red)"):
             if 'Status' in df.columns:
                 opcoes_pendentes = df[df['Status'] == 'Aguardando ⏳']
                 opcoes_lista = [f"{idx}: {row['Jogo']} ({row['Mercado']}) - {row['Data']}" for idx, row in opcoes_pendentes.iterrows()]
-                
                 if not opcoes_lista: st.info("Nenhuma aposta pendente.")
                 else:
                     aposta_selecionada = st.selectbox("Selecione a aposta:", opcoes_lista)
@@ -410,7 +408,6 @@ with tab2:
                         idx_real = int(aposta_selecionada.split(':')[0])
                         atualizar_status_no_banco(db_sheet, idx_real, "Red ❌")
             else: st.warning("Coluna 'Status' não encontrada.")
-
         c1, c2 = st.columns(2)
         c1.metric("Greens ✅", g)
         c2.metric("Reds ❌", r)
